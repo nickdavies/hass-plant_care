@@ -17,11 +17,24 @@ this module stays importable without Home Assistant and its tests need no mocks.
 
 from __future__ import annotations
 
+import logging
 from collections.abc import Mapping
+from dataclasses import dataclass
+from datetime import time
 from typing import Any
 
 import voluptuous as vol
 
+from .dli import Band, DliObjective
+from .light import (
+    AwakeAwareWindow,
+    FixedWindow,
+    LightFixture,
+    LightWindow,
+    Lit,
+    LuxFixture,
+    Weekday,
+)
 from .plant import (
     Calibrated,
     Calibrating,
@@ -60,6 +73,8 @@ FIELD_FC_TOLERANCE = "fcTolerance"
 FIELD_TASK = "task"
 FIELD_ICON = "icon"
 FIELD_EVERY_DAYS = "everyDays"
+
+_LOGGER = logging.getLogger(__name__)
 
 
 class InvalidPlantConfig(Exception):
@@ -134,6 +149,121 @@ def _care_schema() -> vol.Schema:
     )
 
 
+FIELD_LIGHTS = "lights"
+FIELD_LUX_SENSORS = "luxSensors"
+FIELD_LUX = "lux"
+FIELD_DLI = "dli"
+FIELD_LIGHT_SOURCE = "lightSource"
+
+FIELD_SWITCH = "switch"
+FIELD_ROOM = "room"
+FIELD_LUX_TO_PPFD = "luxToPpfd"
+FIELD_SUN_LUX_TO_PPFD = "sunLuxToPpfd"
+FIELD_WINDOW = "window"
+FIELD_MODE = "mode"
+FIELD_DAYS = "days"
+FIELD_FROM = "from"
+FIELD_TO = "to"
+FIELD_IF_AWAKE_FROM = "ifAwakeFrom"
+FIELD_NO_LATER_THAN = "noLaterThan"
+FIELD_NOT_BEFORE = "notBefore"
+FIELD_UNTIL = "until"
+FIELD_PRESENCE = "presence"
+
+FIELD_CATEGORY = "category"
+FIELD_PREFERRED = "preferred"
+FIELD_SURVIVAL = "survival"
+FIELD_LOW = "low"
+FIELD_HIGH = "high"
+FIELD_WINDOW_DAYS = "windowDays"
+FIELD_BUDGET = "budget"
+FIELD_PREFERRED_OVERRIDDEN = "preferredOverridden"
+
+MODE_FIXED = "fixed"
+MODE_AWAKE_AWARE = "awakeAware"
+
+
+def _time_of_day(value: Any) -> time:
+    if not isinstance(value, str):
+        raise vol.Invalid(f"expected a HH:MM time, got {value!r}")
+    try:
+        hours, minutes = value.split(":")
+        return time(hour=int(hours), minute=int(minutes))
+    except (ValueError, TypeError) as err:
+        raise vol.Invalid(f"'{value}' is not a HH:MM time") from err
+
+
+def _weekday(value: Any) -> Weekday:
+    try:
+        return Weekday(value)
+    except ValueError as err:
+        raise vol.Invalid(f"'{value}' is not a weekday") from err
+
+
+def _band_schema() -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Required(FIELD_LOW): vol.Coerce(float),
+            vol.Required(FIELD_HIGH): vol.Coerce(float),
+        }
+    )
+
+
+def _window_schema() -> vol.Schema:
+    # One flat shape with a `mode` discriminant, matching what the generator
+    # emits. Which fields are required depends on the mode, and that is checked
+    # in `parse_window` where a message can say which mode was expected.
+    return vol.Schema(
+        {
+            vol.Required(FIELD_MODE): vol.In([MODE_FIXED, MODE_AWAKE_AWARE]),
+            vol.Optional(FIELD_DAYS): [_weekday],
+            vol.Optional(FIELD_FROM): _time_of_day,
+            vol.Optional(FIELD_TO): _time_of_day,
+            vol.Optional(FIELD_IF_AWAKE_FROM): _time_of_day,
+            vol.Optional(FIELD_NO_LATER_THAN): _time_of_day,
+            vol.Optional(FIELD_NOT_BEFORE): _time_of_day,
+            vol.Optional(FIELD_UNTIL): _time_of_day,
+            vol.Optional(FIELD_PRESENCE): _entity_id,
+        }
+    )
+
+
+def _light_schema() -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Required(FIELD_NAME): str,
+            vol.Required(FIELD_SOURCE): str,
+            vol.Required(FIELD_SWITCH): _entity_id,
+            vol.Required(FIELD_ROOM): str,
+            vol.Optional(FIELD_LUX_TO_PPFD): vol.Coerce(float),
+            vol.Required(FIELD_WINDOW): _window_schema(),
+        }
+    )
+
+
+def _lux_schema() -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Required(FIELD_NAME): str,
+            vol.Required(FIELD_ENTITIES): vol.All([_entity_id], vol.Length(min=1)),
+            vol.Required(FIELD_SUN_LUX_TO_PPFD): vol.Coerce(float),
+        }
+    )
+
+
+def _dli_schema() -> vol.Schema:
+    return vol.Schema(
+        {
+            vol.Required(FIELD_CATEGORY): str,
+            vol.Required(FIELD_PREFERRED): _band_schema(),
+            vol.Optional(FIELD_SURVIVAL): _band_schema(),
+            vol.Required(FIELD_PREFERRED_OVERRIDDEN): bool,
+            vol.Required(FIELD_WINDOW_DAYS): vol.All(int, vol.Range(min=1)),
+            vol.Required(FIELD_BUDGET): vol.All(vol.Coerce(float), vol.Range(min=0.01)),
+        }
+    )
+
+
 def _plant_schema() -> vol.Schema:
     return vol.Schema(
         {
@@ -142,8 +272,80 @@ def _plant_schema() -> vol.Schema:
             vol.Optional(FIELD_SPECIES): str,
             vol.Optional(FIELD_MOISTURE): _moisture_schema(),
             vol.Optional(FIELD_CARE): [_care_schema()],
+            vol.Optional(FIELD_LIGHTS): [str],
+            vol.Optional(FIELD_LUX): str,
+            vol.Optional(FIELD_DLI): _dli_schema(),
+            vol.Optional(FIELD_LIGHT_SOURCE): vol.In([source.value for source in Lit]),
         }
     )
+
+
+def parse_window(data: Mapping[str, Any], fixture: str) -> LightWindow:
+    """Build the window, requiring exactly the fields its mode needs.
+
+    A missing field here means the generator and this component disagree about
+    the document shape, so it is an error rather than a default — a fixture
+    silently running a half-specified window would be worse than one that
+    refuses to load.
+    """
+    days = data.get(FIELD_DAYS)
+    day_set = frozenset(days) if days else None
+
+    try:
+        if data[FIELD_MODE] == MODE_FIXED:
+            return FixedWindow(start=data[FIELD_FROM], end=data[FIELD_TO], days=day_set)
+        return AwakeAwareWindow(
+            if_awake_from=data[FIELD_IF_AWAKE_FROM],
+            no_later_than=data[FIELD_NO_LATER_THAN],
+            not_before=data[FIELD_NOT_BEFORE],
+            until=data[FIELD_UNTIL],
+            presence_entity=data[FIELD_PRESENCE],
+            days=day_set,
+        )
+    except KeyError as err:
+        raise InvalidPlantConfig(
+            f"light fixture '{fixture}': {data[FIELD_MODE]} window is missing {err}"
+        ) from err
+
+
+def parse_lights(data: Mapping[str, Any]) -> tuple[LightFixture, ...]:
+    return tuple(
+        LightFixture(
+            name=entry[FIELD_NAME],
+            switch_entity=entry[FIELD_SWITCH],
+            room=entry[FIELD_ROOM],
+            window=parse_window(entry[FIELD_WINDOW], entry[FIELD_NAME]),
+            lux_to_ppfd=entry.get(FIELD_LUX_TO_PPFD),
+        )
+        for entry in data.get(FIELD_LIGHTS, [])
+    )
+
+
+def parse_lux(data: Mapping[str, Any]) -> tuple[LuxFixture, ...]:
+    return tuple(
+        LuxFixture(
+            name=entry[FIELD_NAME],
+            entities=tuple(entry[FIELD_ENTITIES]),
+            sun_lux_to_ppfd=entry[FIELD_SUN_LUX_TO_PPFD],
+        )
+        for entry in data.get(FIELD_LUX_SENSORS, [])
+    )
+
+
+def parse_dli(data: Mapping[str, Any] | None, plant_name: str) -> DliObjective | None:
+    if data is None:
+        return None
+    try:
+        return DliObjective(
+            category=data[FIELD_CATEGORY],
+            preferred=Band(**data[FIELD_PREFERRED]),
+            survival=Band(**data[FIELD_SURVIVAL]) if FIELD_SURVIVAL in data else None,
+            window_days=data[FIELD_WINDOW_DAYS],
+            budget=data[FIELD_BUDGET],
+            preferred_overridden=data[FIELD_PREFERRED_OVERRIDDEN],
+        )
+    except ValueError as err:
+        raise InvalidPlantConfig(f"plant '{plant_name}': {err}") from err
 
 
 def schema() -> vol.Schema:
@@ -155,7 +357,13 @@ def schema() -> vol.Schema:
     version does not understand, and running on a partial understanding of the
     config is worse than not starting.
     """
-    return vol.Schema({vol.Required(FIELD_PLANTS): [_plant_schema()]})
+    return vol.Schema(
+        {
+            vol.Optional(FIELD_LIGHTS): [_light_schema()],
+            vol.Optional(FIELD_LUX_SENSORS): [_lux_schema()],
+            vol.Required(FIELD_PLANTS): [_plant_schema()],
+        }
+    )
 
 
 def parse_calibration(data: Mapping[str, Any] | None, plant_name: str) -> Calibration:
@@ -225,17 +433,54 @@ def _parse_plant(data: Mapping[str, Any]) -> Plant:
         species=data.get(FIELD_SPECIES),
         moisture=_parse_moisture(moisture_data, name) if moisture_data else None,
         care=tuple(care),
+        lights=tuple(data.get(FIELD_LIGHTS, [])),
+        lux=data.get(FIELD_LUX),
+        dli=parse_dli(data.get(FIELD_DLI), name),
+        light_source=(
+            Lit(source) if (source := data.get(FIELD_LIGHT_SOURCE)) else None
+        ),
     )
 
 
-def parse(data: Mapping[str, Any]) -> tuple[Plant, ...]:
+@dataclass(frozen=True)
+class PlantCareConfig:
+    """The whole document, parsed.
+
+    Fixtures are separate from plants because they are shared: one lamp serves
+    several plants, so repeating it per plant would let two copies disagree.
+    """
+
+    plants: tuple[Plant, ...]
+    lights: tuple[LightFixture, ...] = ()
+    lux_sensors: tuple[LuxFixture, ...] = ()
+
+    def light(self, name: str) -> LightFixture | None:
+        return next((f for f in self.lights if f.name == name), None)
+
+    def lux(self, name: str) -> LuxFixture | None:
+        return next((f for f in self.lux_sensors if f.name == name), None)
+
+    def fixtures_for(self, plant: Plant) -> tuple[LightFixture, ...]:
+        return tuple(f for name in plant.lights if (f := self.light(name)) is not None)
+
+
+def parse(data: Mapping[str, Any]) -> PlantCareConfig:
     """Build the model from an already schema-validated document.
 
     Duplicate names are rejected here rather than by the schema: every entity id
     this component creates is built from the plant name, so two plants sharing
     one would collide silently and the second would win.
+
+    Cross-references are checked too. The generator has already validated them,
+    so a failure here means the two have diverged — which is worth refusing to
+    start over, rather than running with a fixture that silently does nothing.
     """
     plants = tuple(_parse_plant(entry) for entry in data[FIELD_PLANTS])
+    config = PlantCareConfig(
+        plants=plants,
+        lights=parse_lights(data),
+        lux_sensors=parse_lux(data),
+    )
 
     seen: set[str] = set()
     for plant in plants:
@@ -243,4 +488,49 @@ def parse(data: Mapping[str, Any]) -> tuple[Plant, ...]:
             raise InvalidPlantConfig(f"plant '{plant.name}' is defined more than once")
         seen.add(plant.name)
 
-    return plants
+    fixture_names = {f.name for f in config.lights}
+    lux_names = {f.name for f in config.lux_sensors}
+
+    for plant in plants:
+        for name in plant.lights:
+            if name not in fixture_names:
+                raise InvalidPlantConfig(
+                    f"plant '{plant.name}' names light fixture '{name}', which is not "
+                    "in this document"
+                )
+        if plant.lux is not None and plant.lux not in lux_names:
+            raise InvalidPlantConfig(
+                f"plant '{plant.name}' names lux fixture '{plant.lux}', which is not "
+                "in this document"
+            )
+        if plant.dli is not None and plant.lux is None:
+            raise InvalidPlantConfig(
+                f"plant '{plant.name}' has a dli objective with no lux fixture, so "
+                "nothing would measure it"
+            )
+        # A mixed plant's lux reading is sun for part of the day and lamp for the
+        # rest, so a fixture over it that cannot say what its own light is worth
+        # makes every DLI figure for this plant wrong — quietly, and in a
+        # direction nobody can guess. Refuse rather than emit it.
+        if plant.is_mixed_light:
+            for fixture in config.fixtures_for(plant):
+                if fixture.lux_to_ppfd is None:
+                    raise InvalidPlantConfig(
+                        f"plant '{plant.name}' is lit by both sun and lamp, but "
+                        f"fixture '{fixture.name}' declares no luxToPpfd, so its "
+                        "contribution cannot be converted"
+                    )
+
+    referenced = {name for plant in plants for name in plant.lights}
+    for fixture in config.lights:
+        if fixture.name not in referenced:
+            # Not fatal — the lamp still runs its window. But nothing under it
+            # means no correct on-time, so its outcome checks are skipped and
+            # that is worth saying once rather than silently.
+            _LOGGER.warning(
+                "plant_care: light fixture '%s' has no plants under it; its "
+                "on-time checks are disabled",
+                fixture.name,
+            )
+
+    return config

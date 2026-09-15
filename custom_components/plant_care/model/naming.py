@@ -11,6 +11,7 @@ Here a caller asks for `attention(plant)` and cannot spell it wrong.
 
 from __future__ import annotations
 
+from .light import LightFixture, LuxFixture
 from .plant import CareTask, Domain, Entity, Plant
 
 PREFIX = "plant"
@@ -18,6 +19,10 @@ PREFIX = "plant"
 
 def _name(plant: Plant, suffix: str) -> str:
     return f"{PREFIX}_{plant.name}_{suffix}"
+
+
+def _fixture_name(fixture: LightFixture | LuxFixture, suffix: str) -> str:
+    return f"{PREFIX}_light_{fixture.name}_{suffix}"
 
 
 # ---- Moisture signal layer ---------------------------------------------
@@ -73,6 +78,34 @@ def care_done(plant: Plant, task: CareTask) -> Entity:
     """The button. Exists only for tasks nothing can auto-detect — which the
     generator has already enforced by refusing to schedule a detectable task."""
     return Entity(Domain.BUTTON, _name(plant, f"{task.task}_done"))
+
+
+# ---- Lights and light measurement ---------------------------------------
+
+
+def light_killswitch(fixture: LightFixture) -> Entity:
+    """Freezes this fixture's automation. Mirrors `switch.killswitch_motion_*`
+    from light_motion_profiles, deliberately: one gesture for "stop automating
+    this thing", whichever system owns it."""
+    return Entity(Domain.SWITCH, f"{PREFIX}_light_killswitch_{fixture.name}")
+
+
+def light_on_minutes(fixture: LightFixture) -> Entity:
+    """Minutes this fixture has actually been on today, against what its window
+    allows. The outcome, not the intent — which is the only thing that catches a
+    dead bulb behind a live outlet."""
+    return Entity(Domain.SENSOR, _fixture_name(fixture, "on_minutes"))
+
+
+def lux_average(fixture: LuxFixture) -> Entity:
+    """The fixture's members, averaged. Belongs to the fixture rather than a
+    plant because several plants share one reading."""
+    return Entity(Domain.SENSOR, f"{PREFIX}_lux_{fixture.name}")
+
+
+def dli_today(plant: Plant) -> Entity:
+    """Light accumulated so far today, mol/m². Resets at local midnight."""
+    return Entity(Domain.SENSOR, _name(plant, "dli_today"))
 
 
 # ---- The feed -----------------------------------------------------------

@@ -10,7 +10,7 @@ from __future__ import annotations
 from homeassistant.helpers.device_registry import DeviceInfo
 from homeassistant.helpers.entity import Entity as HassEntity
 
-from .model import Entity, Plant
+from .model import Entity, LightFixture, LuxFixture, Plant
 
 DOMAIN = "plant_care"
 
@@ -37,4 +37,35 @@ class PlantEntity(HassEntity):
             name=self._plant.display,
             manufacturer="plant_care",
             model=self._plant.species or "plant",
+        )
+
+
+class FixtureEntity(HassEntity):
+    """Base for anything belonging to a light or lux fixture.
+
+    A separate device from the plants, because a fixture is shared: hanging its
+    killswitch off one of the plants under it would be arbitrary, and would hide
+    it from anyone looking at the others.
+    """
+
+    _attr_should_poll = False
+    _attr_has_entity_name = False
+
+    def __init__(
+        self, fixture: LightFixture | LuxFixture, entity: Entity, name: str
+    ) -> None:
+        self._fixture = fixture
+        self.entity_id = entity.full
+        self._attr_unique_id = entity.full
+        self._attr_name = name
+
+    @property
+    def device_info(self) -> DeviceInfo:
+        room = getattr(self._fixture, "room", None)
+        return DeviceInfo(
+            identifiers={(DOMAIN, f"fixture_{self._fixture.name}")},
+            name=self._fixture.name.replace("_", " ").title(),
+            manufacturer="plant_care",
+            model="grow light" if room else "lux group",
+            suggested_area=room,
         )

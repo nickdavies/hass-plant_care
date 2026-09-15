@@ -22,8 +22,12 @@ from ..lovelace import (
     View,
     divider,
 )
-from ..model import Calibrated, Plant, naming
+from ..model import Calibrated, LightFixture, Plant, PlantCareConfig, naming
 
+# Items come from several sources with different shapes — a care task carries
+# days and an interval, a fault carries a remedy, a frozen killswitch carries no
+# plant at all — so every field but `label` is tested before it is rendered.
+# Anything else and one new item kind turns the whole card into an error.
 OVERVIEW = """## Needs attention
 
 {% set items = state_attr('sensor.plant_outstanding', 'items') or [] %}
@@ -31,7 +35,12 @@ OVERVIEW = """## Needs attention
 Nothing outstanding.
 {% else %}
 {% for item in items %}
-- **{{ item.name }}** — {{ item.label }} ({{ item.days | round(0) }}d ago, every {{ item.every }}d)
+- **{{ item.name }}** — {{ item.label }}
+{%- if item.days is defined and item.days is not none %} ({{ item.days | round(0) }}d ago{% if item.every is defined %}, every {{ item.every }}d{% endif %})
+{%- endif %}
+{%- if item.detail is defined and item.detail is not none %}
+  {{ item.detail }}
+{%- endif %}
 {% endfor %}
 {% endif %}"""
 
@@ -47,8 +56,9 @@ Put both in `inputs/plants.yaml` and regenerate."""
 
 
 class PlantsDashboard(GeneratedDashboard):
-    def __init__(self, plants: tuple[Plant, ...]) -> None:
-        self._plants = plants
+    def __init__(self, config: PlantCareConfig) -> None:
+        self._config = config
+        self._plants = config.plants
 
     @property
     def title(self) -> str:
@@ -82,6 +92,77 @@ class PlantsDashboard(GeneratedDashboard):
                 }
             )
         return rows
+
+    def _light_rows(self, plant: Plant) -> list[str | dict[str, str]]:
+        """What this plant's light looks like, when anything measures it.
+
+        The lamps it sits under are rows here too. When a deficit shows up in
+        the feed the first question is always whether the lamp is even on, and
+        the answer should not be two dashboards away.
+        """
+        rows: list[str | dict[str, str]] = []
+
+        if plant.dli is not None:
+            rows.append(
+                {
+                    ENTITY: naming.dli_today(plant).full,
+                    NAME: (
+                        f"DLI today (want {plant.dli.preferred.low:g}"
+                        f"–{plant.dli.preferred.high:g})"
+                    ),
+                    ICON: "mdi:white-balance-sunny",
+                }
+            )
+
+        if plant.lux is not None:
+            lux = self._config.lux(plant.lux)
+            if lux is not None:
+                rows.append(
+                    {
+                        ENTITY: naming.lux_average(lux).full,
+                        NAME: "Light level",
+                        ICON: "mdi:brightness-5",
+                    }
+                )
+
+        for fixture in self._config.fixtures_for(plant):
+            rows.append(
+                {
+                    ENTITY: fixture.switch_entity,
+                    NAME: f"{fixture.name.replace('_', ' ').title()} lamp",
+                    ICON: "mdi:lightbulb",
+                }
+            )
+
+        return rows
+
+    def _fixture_card(self, fixture: LightFixture) -> Renderable:
+        """One card per grow light.
+
+        The killswitch sits next to the on-time sensor deliberately: freezing a
+        fixture is a decision about the plants under it, and the on-time figure
+        is the only thing on the dashboard that will tell you what that decision
+        actually did.
+        """
+        rows: list[str | dict[str, str]] = [
+            {
+                ENTITY: fixture.switch_entity,
+                NAME: "Lamp",
+                ICON: "mdi:lightbulb",
+            },
+            {
+                ENTITY: naming.light_on_minutes(fixture).full,
+                NAME: "On time today",
+                ICON: "mdi:timer-outline",
+            },
+            {
+                ENTITY: naming.light_killswitch(fixture).full,
+                NAME: "Killswitch (freeze, does not turn off)",
+                ICON: "mdi:hand-back-left",
+            },
+        ]
+        title = f"{fixture.name.replace('_', ' ').title()} — {fixture.room}"
+        return EntitiesCard(title=title, entities=rows)
 
     def _plant_card(self, plant: Plant) -> Renderable:
         cards: list[Renderable] = []
@@ -138,6 +219,12 @@ class PlantsDashboard(GeneratedDashboard):
                     }
                 )
 
+        light_rows = self._light_rows(plant)
+        if light_rows:
+            if rows:
+                rows.append(divider())
+            rows.extend(light_rows)
+
         care_rows = self._care_rows(plant)
         if care_rows:
             if rows:
@@ -174,11 +261,26 @@ class PlantsDashboard(GeneratedDashboard):
                 )
             )
 
+        # Two days rather than a week, because the shape being read here is the
+        # daily one: where accumulation flattens is when the light stopped, and
+        # a week compresses that into nothing.
+        if plant.dli is not None:
+            cards.append(
+                HistoryGraphCard(
+                    title=f"{plant.display} — light",
+                    hours_to_show=48,
+                    entities=[
+                        {ENTITY: naming.dli_today(plant).full, NAME: "DLI today"}
+                    ],
+                )
+            )
+
         return VerticalStackCard(cards=cards)
 
     async def render(self) -> DBT:
         cards: list[Renderable] = [MarkdownCard(OVERVIEW)]
         cards.extend(self._plant_card(plant) for plant in self._plants)
+        cards.extend(self._fixture_card(fixture) for fixture in self._config.lights)
 
         return Dashboard(
             [View(title=self.title, cards=[VerticalStackCard(cards=cards)])]

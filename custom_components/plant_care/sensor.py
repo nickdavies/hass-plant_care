@@ -2,9 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping
 from datetime import timedelta
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
 from homeassistant.core import HomeAssistant, callback
@@ -16,10 +15,14 @@ from homeassistant.util import dt as dt_util
 
 from .const import ATTR_ITEMS, DOMAIN, SIGNAL_CARE_UPDATED
 from .entity import PlantEntity
+from .feed import all_items, plant_items
+from .light_entities import DliTodaySensor, LightOnMinutesSensor, LuxAverageSensor
 from .model import CareTask, Plant, naming
-from .moisture import MoistureCoordinator
 from .moisture_entities import moisture_sensors
 from .store import EventLog
+
+if TYPE_CHECKING:
+    from . import PlantCareData
 
 # Days-since only changes meaningfully once an hour; polling faster would burn
 # state writes to move a one-decimal number that barely moves.
@@ -35,23 +38,35 @@ async def async_setup_platform(
     if discovery_info is None:
         return
 
-    data = hass.data[DOMAIN]
+    data: PlantCareData = hass.data[DOMAIN]
 
     entities: list[SensorEntity] = []
+    lux_seen: set[str] = set()
     for plant in data.plants:
         for task in plant.care:
             entities.append(CareDaysSinceSensor(plant, task, data.event_log))
-        entities.append(
-            PlantAttentionSensor(
-                plant, data.event_log, data.coordinators.get(plant.name)
-            )
-        )
+        entities.append(PlantAttentionSensor(data, plant))
 
         coordinator = data.coordinators.get(plant.name)
         if coordinator is not None:
             entities.extend(moisture_sensors(coordinator, data.event_log))
 
-    entities.append(OutstandingSensor(data.plants, data.event_log, data.coordinators))
+        dli = data.dli_coordinators.get(plant.name)
+        if dli is not None:
+            entities.append(DliTodaySensor(dli))
+            # One entity per lux *fixture*, not per plant: several plants can
+            # share a fixture, and a second copy would claim the same entity id
+            # and silently win. Whichever coordinator backs it reads the same
+            # entities and averages them the same way.
+            if dli.lux_fixture.name not in lux_seen:
+                lux_seen.add(dli.lux_fixture.name)
+                entities.append(LuxAverageSensor(dli))
+
+    entities.extend(
+        LightOnMinutesSensor(controller)
+        for controller in data.light_controllers.values()
+    )
+    entities.append(OutstandingSensor(data))
     async_add_entities(entities)
 
 
@@ -122,95 +137,40 @@ class CareDaysSinceSensor(_CareDrivenSensor):
         return {"every_days": self._task.every_days}
 
 
-def _items_for(
-    plant: Plant,
-    event_log: EventLog,
-    coordinator: MoistureCoordinator | None,
-) -> list[dict[str, Any]]:
-    """Everything this plant currently needs, as plain dicts.
-
-    Plain dicts because this becomes a state attribute, and a consumer — a
-    dashboard card now, a task-system bridge later — should not have to know
-    anything about this component's types to read it.
-
-    `kind` separates the sources: `needs_water` is detected by a probe, `care` is
-    a schedule someone has to act on, and the health kinds are faults. A consumer
-    that treats them identically still works; one that wants to route them
-    differently can.
-
-    Faults come first. A silent probe means nothing else about this plant can be
-    believed, so it should not be buried under three overdue feedings.
-    """
-    now = dt_util.utcnow()
-    items: list[dict[str, Any]] = []
-
-    if coordinator is not None:
-        items.extend(
-            issue.as_item(plant.name, plant.display) for issue in coordinator.health()
-        )
-
-    if coordinator is not None and coordinator.needs_water:
-        items.append(
-            {
-                "plant": plant.name,
-                "name": plant.display,
-                "kind": "needs_water",
-                "label": "Needs water",
-                "days": event_log.days_since_watered(plant.name, now),
-            }
-        )
-
-    for task in plant.care:
-        days = event_log.care_days_since(plant.name, task.task, now)
-        if not task.is_overdue(days):
-            continue
-        items.append(
-            {
-                "plant": plant.name,
-                "name": plant.display,
-                "kind": "care",
-                "task": task.task,
-                "label": task.display,
-                "days": days,
-                "every": task.every_days,
-            }
-        )
-
-    return items
-
-
 class PlantAttentionSensor(_CareDrivenSensor):
     """How many things this plant needs, with the list as an attribute."""
 
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:alert-circle-outline"
+    _unrecorded_attributes = frozenset({ATTR_ITEMS})
 
-    def __init__(
-        self,
-        plant: Plant,
-        event_log: EventLog,
-        coordinator: MoistureCoordinator | None,
-    ) -> None:
+    def __init__(self, data: PlantCareData, plant: Plant) -> None:
         super().__init__(
-            plant, naming.attention(plant), f"{plant.display} attention", event_log
+            plant, naming.attention(plant), f"{plant.display} attention", data.event_log
         )
-        self._coordinator = coordinator
+        self._data = data
 
     async def async_added_to_hass(self) -> None:
         await super().async_added_to_hass()
-        # Also re-read when the probe moves: needs-water is one of the items.
-        if self._coordinator is not None:
-            self.async_on_remove(
-                self._coordinator.async_add_listener(self._handle_update)
-            )
+        # Also re-read when a measurement moves: needs-water and the light
+        # checks are items too, and neither is driven by a care press.
+        coordinator = self._data.coordinators.get(self._plant.name)
+        if coordinator is not None:
+            self.async_on_remove(coordinator.async_add_listener(self._handle_update))
+        dli = self._data.dli_coordinators.get(self._plant.name)
+        if dli is not None:
+            self.async_on_remove(dli.async_add_listener(self._handle_update))
+
+    def _items(self) -> list[dict[str, Any]]:
+        return plant_items(self._data, self._plant)
 
     @property
     def native_value(self) -> int:
-        return len(_items_for(self._plant, self._event_log, self._coordinator))
+        return len(self._items())
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {ATTR_ITEMS: _items_for(self._plant, self._event_log, self._coordinator)}
+        return {ATTR_ITEMS: self._items()}
 
 
 class OutstandingSensor(SensorEntity):
@@ -229,19 +189,16 @@ class OutstandingSensor(SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:format-list-checks"
 
-    def __init__(
-        self,
-        plants: tuple[Plant, ...],
-        event_log: EventLog,
-        coordinators: Mapping[str, MoistureCoordinator],
-    ) -> None:
+    # The count is worth a history; the list is prose, re-derivable at any time,
+    # and would be written into the database on every measurement that moves.
+    _unrecorded_attributes = frozenset({ATTR_ITEMS})
+
+    def __init__(self, data: PlantCareData) -> None:
         entity = naming.outstanding()
         self.entity_id = entity.full
         self._attr_unique_id = entity.full
         self._attr_name = "Plants outstanding"
-        self._plants = plants
-        self._event_log = event_log
-        self._coordinators = coordinators
+        self._data = data
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(
@@ -254,8 +211,12 @@ class OutstandingSensor(SensorEntity):
                 self.hass, self._handle_interval, RECOMPUTE_INTERVAL
             )
         )
-        for coordinator in self._coordinators.values():
+        for coordinator in self._data.coordinators.values():
             self.async_on_remove(coordinator.async_add_listener(self._handle_update))
+        for dli in self._data.dli_coordinators.values():
+            self.async_on_remove(dli.async_add_listener(self._handle_update))
+        for controller in self._data.light_controllers.values():
+            self.async_on_remove(controller.async_add_listener(self._handle_update))
 
     @callback
     def _handle_update(self) -> None:
@@ -266,12 +227,7 @@ class OutstandingSensor(SensorEntity):
         self.async_write_ha_state()
 
     def _items(self) -> list[dict[str, Any]]:
-        items: list[dict[str, Any]] = []
-        for plant in self._plants:
-            items.extend(
-                _items_for(plant, self._event_log, self._coordinators.get(plant.name))
-            )
-        return items
+        return all_items(self._data)
 
     @property
     def native_value(self) -> int:

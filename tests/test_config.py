@@ -7,15 +7,20 @@ that such a divergence is loud.
 
 from __future__ import annotations
 
+from datetime import time
 from typing import Any
 
 import pytest
 import voluptuous as vol
 
 from custom_components.plant_care.model import (
+    AwakeAwareWindow,
     Calibrated,
     Calibrating,
+    FixedWindow,
     InvalidPlantConfig,
+    Lit,
+    Weekday,
     parse,
     schema,
 )
@@ -71,6 +76,11 @@ SENSORLESS_PLANT: dict[str, Any] = {
 
 
 def load(*plants: dict[str, Any]):
+    """Just the plants — most tests here are about one plant's shape."""
+    return load_config(*plants).plants
+
+
+def load_config(*plants: dict[str, Any]):
     doc = schema()(document(*plants))
     return parse(doc)
 
@@ -213,3 +223,209 @@ class TestOptionalStructure:
         (plant,) = load(CALIBRATED_PLANT)
         assert plant.care_task("feed").every_days == 14
         assert plant.care_task("repot") is None
+
+
+# --- Lights, lux and DLI ---------------------------------------------------
+
+STUDY_LIGHT: dict[str, Any] = {
+    "name": "study_shelf",
+    "source": "nick_study.outlets.sansi_100w_lamp",
+    "switch": "switch.nick_study_outlet_sansi_100w_lamp",
+    "room": "nick_study",
+    "luxToPpfd": 0.0125,
+    "window": {
+        "mode": "awakeAware",
+        "ifAwakeFrom": "06:00",
+        "noLaterThan": "09:00",
+        "notBefore": "17:00",
+        "until": "19:00",
+        "presence": "sensor.person_presence_nick",
+    },
+}
+
+STUDY_LUX: dict[str, Any] = {
+    "name": "study_shelf",
+    "entities": ["sensor.esphome_study_lux_1", "sensor.esphome_study_lux_2"],
+    "sunLuxToPpfd": 0.0185,
+}
+
+DLI: dict[str, Any] = {
+    "category": "foliage_tropical",
+    "preferred": {"low": 4.0, "high": 9.0},
+    "survival": {"low": 2.0, "high": 20.0},
+    "preferredOverridden": False,
+    "windowDays": 28,
+    "budget": 20.0,
+}
+
+LIT_PLANT: dict[str, Any] = {
+    "name": "monstera",
+    "display": "Monstera",
+    "lights": ["study_shelf"],
+    "lux": "study_shelf",
+    "lightSource": "mixed",
+    "dli": DLI,
+}
+
+
+def load_lights(
+    *plants: dict[str, Any],
+    lights: list[dict[str, Any]] | None = None,
+    lux: list[dict[str, Any]] | None = None,
+):
+    doc = schema()(
+        {
+            "lights": lights if lights is not None else [STUDY_LIGHT],
+            "luxSensors": lux if lux is not None else [STUDY_LUX],
+            "plants": list(plants),
+        }
+    )
+    return parse(doc)
+
+
+class TestFixtureReferences:
+    """The generator has already checked all of this. A failure here therefore
+    means the two have diverged, which is worth refusing to start over."""
+
+    def test_fixtures_resolve_by_name(self) -> None:
+        config = load_lights(LIT_PLANT)
+        (plant,) = config.plants
+        (fixture,) = config.fixtures_for(plant)
+        assert fixture.switch_entity == "switch.nick_study_outlet_sansi_100w_lamp"
+        assert config.lux("study_shelf").entities == (
+            "sensor.esphome_study_lux_1",
+            "sensor.esphome_study_lux_2",
+        )
+
+    def test_an_unknown_light_fixture_is_rejected_by_name(self) -> None:
+        with pytest.raises(InvalidPlantConfig, match="greenhouse"):
+            load_lights({**LIT_PLANT, "lights": ["greenhouse"]})
+
+    def test_an_unknown_lux_fixture_is_rejected_by_name(self) -> None:
+        with pytest.raises(InvalidPlantConfig, match="hallway"):
+            load_lights({**LIT_PLANT, "lux": "hallway"})
+
+    def test_an_objective_nothing_measures_is_rejected(self) -> None:
+        """A DLI budget with no lux fixture would sit at zero for ever and burn
+        continuously, which looks exactly like a plant in a cupboard."""
+        plant = {k: v for k, v in LIT_PLANT.items() if k != "lux"}
+        with pytest.raises(InvalidPlantConfig, match="nothing would measure"):
+            load_lights({**plant, "lightSource": "grow"})
+
+    def test_a_mixed_plant_under_a_lamp_with_no_factor_is_rejected(self) -> None:
+        """Its lux reading is sun for part of the day and lamp for the rest. A
+        lamp that cannot say what its own light is worth makes every DLI figure
+        for this plant wrong, quietly, in a direction nobody can guess."""
+        no_factor = {k: v for k, v in STUDY_LIGHT.items() if k != "luxToPpfd"}
+        with pytest.raises(InvalidPlantConfig, match="luxToPpfd"):
+            load_lights(LIT_PLANT, lights=[no_factor])
+
+    def test_a_sun_only_plant_needs_no_lamp_factor(self) -> None:
+        """Derived, not configured: nothing is switching, so one factor serves
+        the whole day and the requirement does not apply."""
+        no_factor = {k: v for k, v in STUDY_LIGHT.items() if k != "luxToPpfd"}
+        sun_only = {k: v for k, v in LIT_PLANT.items() if k != "lights"}
+        config = load_lights({**sun_only, "lightSource": "sun"}, lights=[no_factor])
+        assert config.plants[0].light_source is Lit.SUN
+        assert not config.plants[0].is_mixed_light
+
+
+class TestWindowParsing:
+    def test_an_awake_aware_window_carries_its_presence_entity(self) -> None:
+        config = load_lights(LIT_PLANT)
+        window = config.light("study_shelf").window
+        assert isinstance(window, AwakeAwareWindow)
+        assert window.presence_entity == "sensor.person_presence_nick"
+        assert window.if_awake_from == time(6, 0)
+        assert window.until == time(19, 0)
+
+    def test_a_fixed_window_has_no_presence_at_all(self) -> None:
+        fixed = {
+            **STUDY_LIGHT,
+            "window": {"mode": "fixed", "from": "07:00", "to": "19:00"},
+        }
+        config = load_lights(LIT_PLANT, lights=[fixed])
+        window = config.light("study_shelf").window
+        assert isinstance(window, FixedWindow)
+        assert window.start == time(7, 0)
+        assert window.days is None  # every day
+
+    def test_a_half_written_window_names_the_fixture(self) -> None:
+        """These messages reach a human reading the log, and "missing notBefore"
+        without saying which fixture is most of the way to useless."""
+        broken = {**STUDY_LIGHT, "window": {"mode": "awakeAware", "until": "19:00"}}
+        with pytest.raises(InvalidPlantConfig, match="study_shelf"):
+            load_lights(LIT_PLANT, lights=[broken])
+
+    def test_an_unknown_window_mode_is_rejected(self) -> None:
+        broken = {**STUDY_LIGHT, "window": {"mode": "auto", "until": "19:00"}}
+        with pytest.raises(vol.Invalid):
+            load_lights(LIT_PLANT, lights=[broken])
+
+    def test_a_malformed_time_is_rejected(self) -> None:
+        broken = {
+            **STUDY_LIGHT,
+            "window": {"mode": "fixed", "from": "seven", "to": "19:00"},
+        }
+        with pytest.raises(vol.Invalid):
+            load_lights(LIT_PLANT, lights=[broken])
+
+    def test_days_are_parsed_into_the_enum_not_left_as_strings(self) -> None:
+        weekend = {
+            **STUDY_LIGHT,
+            "window": {
+                "mode": "fixed",
+                "from": "07:00",
+                "to": "19:00",
+                "days": ["sat", "sun"],
+            },
+        }
+        config = load_lights(LIT_PLANT, lights=[weekend])
+        assert config.light("study_shelf").window.days == frozenset(
+            {Weekday.SAT, Weekday.SUN}
+        )
+
+    def test_a_day_that_is_not_a_weekday_is_rejected(self) -> None:
+        broken = {
+            **STUDY_LIGHT,
+            "window": {
+                "mode": "fixed",
+                "from": "07:00",
+                "to": "19:00",
+                "days": ["caturday"],
+            },
+        }
+        with pytest.raises(vol.Invalid):
+            load_lights(LIT_PLANT, lights=[broken])
+
+
+class TestDliParsing:
+    def test_the_objective_is_carried_verbatim(self) -> None:
+        (plant,) = load_lights(LIT_PLANT).plants
+        assert plant.dli.category == "foliage_tropical"
+        assert plant.dli.preferred.low == 4.0
+        assert plant.dli.survival.high == 20.0
+        assert plant.dli.budget == 20.0
+
+    def test_survival_is_optional(self) -> None:
+        dli = {k: v for k, v in DLI.items() if k != "survival"}
+        (plant,) = load_lights({**LIT_PLANT, "dli": dli}).plants
+        assert plant.dli.survival is None
+
+    def test_an_inverted_band_names_the_plant(self) -> None:
+        dli = {**DLI, "preferred": {"low": 9.0, "high": 4.0}}
+        with pytest.raises(InvalidPlantConfig, match="monstera"):
+            load_lights({**LIT_PLANT, "dli": dli})
+
+    def test_a_preferred_band_outside_survival_names_the_plant(self) -> None:
+        dli = {**DLI, "survival": {"low": 5.0, "high": 8.0}}
+        with pytest.raises(InvalidPlantConfig, match="monstera"):
+            load_lights({**LIT_PLANT, "dli": dli})
+
+    def test_a_zero_budget_is_rejected(self) -> None:
+        with pytest.raises(vol.Invalid):
+            load_lights({**LIT_PLANT, "dli": {**DLI, "budget": 0}})
+
+    def test_an_unknown_light_source_is_rejected(self) -> None:
+        with pytest.raises(vol.Invalid):
+            load_lights({**LIT_PLANT, "lightSource": "moonlight"})

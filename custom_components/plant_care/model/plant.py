@@ -13,6 +13,9 @@ from __future__ import annotations
 from dataclasses import dataclass
 from enum import Enum
 
+from .dli import DliObjective
+from .light import Lit
+
 
 class Domain(Enum):
     """Home Assistant entity domains this component creates entities in."""
@@ -20,6 +23,7 @@ class Domain(Enum):
     SENSOR = "sensor"
     BINARY_SENSOR = "binary_sensor"
     BUTTON = "button"
+    SWITCH = "switch"
 
 
 @dataclass(frozen=True)
@@ -179,6 +183,26 @@ class Plant:
     species: str | None
     moisture: Moisture | None
     care: tuple[CareTask, ...]
+
+    lights: tuple[str, ...] = ()
+    """Fixture names. The fixtures themselves live once on the config, not
+    repeated per plant."""
+
+    lux: str | None = None
+    """The lux fixture measuring this plant, by name."""
+
+    dli: DliObjective | None = None
+    """Only ever set alongside `lux` — an objective nothing measures is checked
+    at parse time, not tolerated."""
+
+    light_source: Lit | None = None
+    """`None` when nothing knows anything about this plant's light: no fixture
+    over it and no sensor on it."""
+
+    @property
+    def is_mixed_light(self) -> bool:
+        """Sun and lamp together, so one lux→PPFD scalar will not do."""
+        return self.light_source is Lit.MIXED
 
     def care_task(self, task: str) -> CareTask | None:
         for entry in self.care:

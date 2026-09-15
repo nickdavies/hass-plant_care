@@ -18,7 +18,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Mapping
-from datetime import datetime
+from datetime import date, datetime
 from enum import Enum
 from typing import Any, Protocol
 
@@ -33,11 +33,14 @@ it, the probe sees it."""
 
 
 class EventKind(Enum):
-    """What produced an event. Part of the storage key, so the two namespaces
-    can never collide."""
+    """What produced an event. Part of the storage key, so the namespaces can
+    never collide."""
 
     CARE = "care"
     SYSTEM = "system"
+    LIGHT = "light"
+    """Keyed by *fixture* name rather than plant name — a fixture is shared, so
+    hanging its events off one of the plants under it would be arbitrary."""
 
 
 class StoreLike(Protocol):
@@ -58,8 +61,20 @@ def event_key(plant: str, kind: EventKind, name: str) -> str:
 
 SECTION_EVENTS = "events"
 SECTION_FLAGS = "flags"
+SECTION_DLI = "dli"
 
 FLAG_NEEDS_WATER = "needs_water"
+
+KILLSWITCH_SINCE = "killswitch_since"
+"""When a fixture's killswitch was last turned on.
+
+Stored rather than read off the entity's `last_changed`, and that is not
+fussiness. `RestoreState` brings the switch's *value* back after a restart but
+its `last_changed` becomes the restore time, so a killswitch somebody flipped
+two days ago would read as brand new every time Home Assistant restarted — and
+the 48h catchall that exists to catch exactly that forgetfulness would never
+fire. Same class of trap as an `input_datetime` defaulting to today at midnight.
+"""
 
 
 class EventLog:
@@ -75,6 +90,7 @@ class EventLog:
         self._store = store
         self._events: dict[str, datetime] = {}
         self._flags: dict[str, bool] = {}
+        self._dli: dict[str, dict[date, float]] = {}
 
     async def async_load(self) -> None:
         raw: Mapping[str, Any] | None = await self._store.async_load()
@@ -96,6 +112,19 @@ class EventLog:
             if isinstance(value, bool):
                 self._flags[key] = value
 
+        for plant, days in raw.get(SECTION_DLI, {}).items():
+            bucket = self._dli.setdefault(plant, {})
+            for day, value in days.items():
+                try:
+                    bucket[date.fromisoformat(day)] = float(value)
+                except (TypeError, ValueError):
+                    _LOGGER.warning(
+                        "plant_care: discarding unreadable dli entry %s/%s: %r",
+                        plant,
+                        day,
+                        value,
+                    )
+
     async def _async_save(self) -> None:
         await self._store.async_save(
             {
@@ -103,6 +132,10 @@ class EventLog:
                     key: value.isoformat() for key, value in self._events.items()
                 },
                 SECTION_FLAGS: dict(self._flags),
+                SECTION_DLI: {
+                    plant: {day.isoformat(): value for day, value in days.items()}
+                    for plant, days in self._dli.items()
+                },
             }
         )
 
@@ -111,6 +144,12 @@ class EventLog:
     ) -> None:
         self._events[event_key(plant, kind, name)] = when
         await self._async_save()
+
+    async def async_clear(self, plant: str, kind: EventKind, name: str) -> None:
+        """Forget an event. Distinct from recording `None`, which the timestamps
+        cannot express."""
+        if self._events.pop(event_key(plant, kind, name), None) is not None:
+            await self._async_save()
 
     async def async_set_flag(self, plant: str, flag: str, value: bool) -> None:
         self._flags[f"{plant}.{flag}"] = value
@@ -161,3 +200,39 @@ class EventLog:
 
     def needs_water(self, plant: str) -> bool:
         return self.flag(plant, FLAG_NEEDS_WATER)
+
+    # ---- Lights --------------------------------------------------------
+
+    async def async_set_killswitch_since(
+        self, fixture: str, when: datetime | None
+    ) -> None:
+        if when is None:
+            await self.async_clear(fixture, EventKind.LIGHT, KILLSWITCH_SINCE)
+        else:
+            await self.async_record(fixture, EventKind.LIGHT, KILLSWITCH_SINCE, when)
+
+    def killswitch_since(self, fixture: str) -> datetime | None:
+        return self.last(fixture, EventKind.LIGHT, KILLSWITCH_SINCE)
+
+    # ---- Daily light integral ------------------------------------------
+
+    async def async_record_dli(
+        self, plant: str, day: date, value: float, keep_days: int
+    ) -> None:
+        """Write one day's accumulation, trimming anything past the window.
+
+        Today's partial total is written here too, under today's date, so a
+        restart mid-afternoon resumes rather than starting the day at zero. A
+        day that restarted to zero would look like a severe shortfall and burn
+        budget for a failure that never happened.
+        """
+        bucket = self._dli.setdefault(plant, {})
+        bucket[day] = round(value, 3)
+
+        for stale in sorted(bucket)[: max(0, len(bucket) - keep_days)]:
+            del bucket[stale]
+
+        await self._async_save()
+
+    def dli_history(self, plant: str) -> dict[date, float]:
+        return dict(self._dli.get(plant, {}))

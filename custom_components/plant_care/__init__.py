@@ -26,20 +26,22 @@ from typing import TYPE_CHECKING, Any
 import voluptuous as vol
 
 from .const import DOMAIN
-from .model import DEFAULT_POLICY, Plant, Policy, parse, schema
+from .model import DEFAULT_POLICY, Plant, PlantCareConfig, Policy, parse, schema
 from .store import STORAGE_KEY, STORAGE_VERSION, EventLog
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.typing import ConfigType
 
+    from .dli import DliCoordinator
+    from .light_control import LightController
     from .moisture import MoistureCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
 # Plain strings rather than `homeassistant.const.Platform`, which would be a
-# runtime HA import for three values that are stable identifiers anyway.
-PLATFORMS: tuple[str, ...] = ("sensor", "binary_sensor", "button")
+# runtime HA import for four values that are stable identifiers anyway.
+PLATFORMS: tuple[str, ...] = ("sensor", "binary_sensor", "button", "switch")
 
 # The schema is strict — unknown keys are rejected. The document is generated,
 # so an unexpected key means the generator emitted something this version does
@@ -57,11 +59,21 @@ class PlantCareData:
     objects — which is the entire point of having parsed them.
     """
 
-    plants: tuple[Plant, ...]
+    config: PlantCareConfig
+    """The whole document, so a platform can resolve the fixtures a plant names."""
     policy: Policy
     event_log: EventLog
     coordinators: Mapping[str, MoistureCoordinator]
     """Keyed by plant name. Only plants with a probe have one."""
+    light_controllers: Mapping[str, LightController]
+    """Keyed by *fixture* name — a fixture is shared, so it is not per plant."""
+    dli_coordinators: Mapping[str, DliCoordinator]
+    """Keyed by plant name. Only plants with both a lux fixture and an
+    objective have one; the pair is enforced at parse time."""
+
+    @property
+    def plants(self) -> tuple[Plant, ...]:
+        return self.config.plants
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -70,6 +82,8 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     from homeassistant.helpers.storage import Store
 
     from .dashboards import PlantsDashboard
+    from .dli import DliCoordinator
+    from .light_control import LightController
     from .moisture import MoistureCoordinator
 
     domain_config: Mapping[str, Any] | None = config.get(DOMAIN)
@@ -79,14 +93,16 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     # Anything raised here is fatal on purpose. A plant care system that comes
     # up with half its plants missing looks like it is working, and the failure
     # shows up as a plant nobody watered.
-    plants = parse(domain_config)
+    parsed = parse(domain_config)
+    plants = parsed.plants
 
     event_log = EventLog(Store(hass, STORAGE_VERSION, STORAGE_KEY))
     await event_log.async_load()
 
     # Coordinators are started here rather than by an entity, so a plant that is
     # still calibrating — and therefore has no needs-water entity — is monitored
-    # just the same.
+    # just the same. The same reasoning covers the light controllers: a fixture
+    # must run its window whether or not its killswitch entity exists yet.
     coordinators: dict[str, MoistureCoordinator] = {}
     for plant in plants:
         if plant.moisture is None:
@@ -97,17 +113,38 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         await coordinator.async_start()
         coordinators[plant.name] = coordinator
 
+    light_controllers: dict[str, LightController] = {}
+    for fixture in parsed.lights:
+        controller = LightController(hass, fixture, event_log)
+        await controller.async_start()
+        light_controllers[fixture.name] = controller
+
+    dli_coordinators: dict[str, DliCoordinator] = {}
+    for plant in plants:
+        if plant.dli is None or plant.lux is None:
+            continue
+        lux = parsed.lux(plant.lux)
+        assert lux is not None  # cross-checked in `parse`
+        dli = DliCoordinator(hass, plant, lux, parsed.fixtures_for(plant), event_log)
+        await dli.async_start()
+        dli_coordinators[plant.name] = dli
+
     hass.data[DOMAIN] = PlantCareData(
-        plants=plants,
+        config=parsed,
         policy=DEFAULT_POLICY,
         event_log=event_log,
         coordinators=coordinators,
+        light_controllers=light_controllers,
+        dli_coordinators=dli_coordinators,
     )
 
     _LOGGER.debug(
-        "plant_care: loaded %d plants (%d with a moisture probe)",
+        "plant_care: loaded %d plants (%d with a probe, %d with a light budget) "
+        "and %d light fixtures",
         len(plants),
-        sum(1 for plant in plants if plant.moisture is not None),
+        len(coordinators),
+        len(dli_coordinators),
+        len(light_controllers),
     )
 
     for platform in PLATFORMS:
@@ -115,6 +152,6 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             discovery.async_load_platform(hass, platform, DOMAIN, {}, config)
         )
 
-    PlantsDashboard(plants).add_to_hass(hass)
+    PlantsDashboard(parsed).add_to_hass(hass)
 
     return True

@@ -9,7 +9,17 @@ from __future__ import annotations
 
 from typing import Any
 
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import HomeAssistant
+
+from .conftest import (
+    SPARE_SWITCH,
+    STUDY_KILLSWITCH,
+    STUDY_ON_MINUTES,
+    STUDY_SWITCH,
+    at,
+    start,
+)
 
 
 def _entity_ids(node: Any) -> list[str]:
@@ -104,4 +114,60 @@ class TestContent:
             assert entity_id.split(".")[1].startswith("plant_"), (
                 f"card references {entity_id}, which is neither a probe entity "
                 "from the config nor something this component creates"
+            )
+
+
+class TestLightContent:
+    async def test_each_fixture_gets_a_card_naming_its_room(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        await start(hass, freezer, at(12, 0))
+        config = await hass.data["lovelace"].dashboards["plants"].async_load(False)
+        rendered = str(config)
+
+        assert "Study Shelf — nick_study" in rendered
+        assert "Spare Shelf — spare" in rendered
+
+    async def test_the_killswitch_sits_next_to_the_on_time_it_affects(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """Freezing a fixture is a decision about the plants under it, and the
+        on-time figure is the only thing here that says what it actually did."""
+        await start(hass, freezer, at(12, 0))
+        config = await hass.data["lovelace"].dashboards["plants"].async_load(False)
+
+        ids = _entity_ids(config)
+        assert STUDY_KILLSWITCH in ids
+        assert STUDY_ON_MINUTES in ids
+
+    async def test_a_measured_plant_shows_its_band_on_the_row(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        await start(hass, freezer, at(12, 0))
+        config = await hass.data["lovelace"].dashboards["plants"].async_load(False)
+
+        assert "DLI today (want 4–9)" in str(config)
+
+    async def test_an_unmeasured_plant_gets_no_dli_row(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """Derived from which fields are present, not from a feature flag."""
+        await start(hass, freezer, at(12, 0))
+        config = await hass.data["lovelace"].dashboards["plants"].async_load(False)
+
+        assert "sensor.plant_ficus_alii_dli_today" not in str(config)
+
+    async def test_every_referenced_entity_exists(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """Including the lamp switches, which come from zigbee2mqtt rather than
+        from here — the ids the generator resolved."""
+        await start(hass, freezer, at(12, 0))
+        config = await hass.data["lovelace"].dashboards["plants"].async_load(False)
+
+        for entity_id in _entity_ids(config):
+            if entity_id in (STUDY_SWITCH, SPARE_SWITCH):
+                continue
+            assert hass.states.get(entity_id) is not None, (
+                f"card references {entity_id}, which nothing created"
             )

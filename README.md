@@ -1,13 +1,13 @@
 # plant_care
 
 A Home Assistant component for running a plant-care operation: moisture
-monitoring, watering detection, recurring care tasks, and one consolidated feed
-of everything outstanding.
+monitoring, watering detection, grow light scheduling, daily light integral as a
+service objective, recurring care tasks, and one consolidated feed of everything
+outstanding.
 
-**Status: in progress.** Moisture monitoring, watering detection, care tasks,
-health checks and the outstanding feed all work and are tested. Grow lights and
-the DLI SLO are not written yet — they need the generator to grow lights and lux
-fixtures first.
+**Status: feature complete, not yet deployed.** Everything described here works
+and is tested. None of it has run against real hardware, and every tolerance in
+it is a guess until a fortnight of data says otherwise.
 
 ## Why this exists
 
@@ -28,13 +28,20 @@ smoothing windows, staleness rules, defaults — lives here.
 
 ```
 custom_components/plant_care/
-├── model/          pure Python, zero Home Assistant imports
-│   ├── plant.py      the domain types
-│   ├── policy.py     the decisions, with their reasoning
-│   ├── config.py     strict parsing of the generated document
-│   └── naming.py     every entity id, in one place
-├── store.py        durable last-done record for care tasks
-└── ...             entity platforms (not yet written)
+├── model/              pure Python, zero Home Assistant imports
+│   ├── plant.py          the domain types
+│   ├── light.py          windows, presence, lux→PPFD, on-time bounds
+│   ├── dli.py            bands, error budget, burn rates, the integrator
+│   ├── signals.py        smoothing, watering detection, moisture health
+│   ├── policy.py         the decisions, with their reasoning
+│   ├── config.py         strict parsing of the generated document
+│   └── naming.py         every entity id, in one place
+├── moisture.py         one coordinator per probe
+├── light_control.py    one controller per grow light
+├── dli.py              one coordinator per measured plant
+├── feed.py             what "outstanding" means, in one place
+├── store.py            durable events, flags, killswitch stamps, DLI history
+└── sensor.py, binary_sensor.py, button.py, switch.py, dashboards/
 ```
 
 **`model/` imports no Home Assistant on purpose.** Its tests need no framework
@@ -93,3 +100,50 @@ on a *detected* watering, and complete channelling produces no rise to detect.
 That case is caught instead by the needs-water latch never clearing — which is
 why the latch is cleared only by a detected watering, never by moisture drifting
 up on its own. There is a test named after it.
+
+**A killswitch freezes a fixture; it does not turn it off.** One boolean rather
+than a kill plus a force, because two can contradict each other. That makes a
+frozen fixture dangerous in both directions — stuck off starves the plants under
+it, stuck on gives them a 24-hour photoperiod — so nothing reports the boolean.
+What gets reported is the *outcome*: actual on-time against what the window
+allows, which reads the same for a dead bulb, a dropped outlet, a manual toggle
+and a frozen automation. Plus a 48-hour backstop for the killswitch itself,
+because forgetting it is the real failure mode.
+
+**The killswitch's "on since" lives in the component's store, not in
+`last_changed`.** `RestoreState` brings a switch's value back after a restart but
+stamps it with the restore time, so a two-day-old killswitch would read as brand
+new on every restart and the 48-hour backstop would never fire.
+
+**Light is an SLO with a continuous error budget, not a threshold.** The budget
+is cumulative mol/m² of deviation from a *band*, so a day 10% short burns a
+little and a day at zero burns a lot — the distinction a "days outside the band"
+count cannot make. A band rather than a point target, because with a point every
+day deviates, the burn rate never returns to zero, and the numbers stop meaning
+anything.
+
+**Nothing about today is reported as a projection.** Light is not flat across a
+day, so extrapolating a morning's rate would call every sunrise a disaster. The
+two intra-day signals are statements about what can no longer change:
+accumulation has already passed the upper bound, or the lower bound is out of
+reach even at the best rate this plant has ever managed.
+
+**The fast burn is asymmetric, and necessarily so.** A day's shortfall cannot
+exceed the band's lower bound while a day's excess has no ceiling, so for most
+houseplants no single dark day reaches a 10× threshold. That is why the fast page
+is "burn rate **or** outside survival", and why the intra-day checks exist: the
+low side is covered by two signals that do not depend on the budget's scale.
+`tests/test_dli.py` pins what the shipped numbers actually do, including what
+they deliberately do *not* alert on.
+
+**lux→PPFD belongs to the emitter, not the sensor.** Lux is weighted by human
+vision and PPFD counts photons, so the ratio depends entirely on the spectrum.
+Each lamp declares its own factor and the conversion switches with the lamp. Two
+lamps of different types over one sensor cannot be told apart at all — the band's
+width and the error budget are what absorb that, which is the whole argument for
+an SLO here rather than a target. Tune the budget before tuning factors.
+
+**A lux fixture is averaged, and a dead member is skipped rather than counted as
+zero.** One probe shaded by a single leaf reports a value true for that spot and
+wrong for the plant; a probe that has dropped out would otherwise read as
+darkness, which looks exactly like a failed lamp.
