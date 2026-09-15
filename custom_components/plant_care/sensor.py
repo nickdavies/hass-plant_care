@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Mapping
 from datetime import timedelta
 from typing import Any
 
@@ -16,7 +17,9 @@ from homeassistant.util import dt as dt_util
 from .const import ATTR_ITEMS, DOMAIN, SIGNAL_CARE_UPDATED
 from .entity import PlantEntity
 from .model import CareTask, Plant, naming
-from .store import CareLog
+from .moisture import MoistureCoordinator
+from .moisture_entities import moisture_sensors
+from .store import EventLog
 
 # Days-since only changes meaningfully once an hour; polling faster would burn
 # state writes to move a one-decimal number that barely moves.
@@ -37,10 +40,18 @@ async def async_setup_platform(
     entities: list[SensorEntity] = []
     for plant in data.plants:
         for task in plant.care:
-            entities.append(CareDaysSinceSensor(plant, task, data.care_log))
-        entities.append(PlantAttentionSensor(plant, data.care_log))
+            entities.append(CareDaysSinceSensor(plant, task, data.event_log))
+        entities.append(
+            PlantAttentionSensor(
+                plant, data.event_log, data.coordinators.get(plant.name)
+            )
+        )
 
-    entities.append(OutstandingSensor(data.plants, data.care_log))
+        coordinator = data.coordinators.get(plant.name)
+        if coordinator is not None:
+            entities.extend(moisture_sensors(coordinator, data.event_log))
+
+    entities.append(OutstandingSensor(data.plants, data.event_log, data.coordinators))
     async_add_entities(entities)
 
 
@@ -52,9 +63,9 @@ class _CareDrivenSensor(PlantEntity, SensorEntity):
     continuously. Neither alone is enough.
     """
 
-    def __init__(self, plant: Plant, entity, name: str, care_log: CareLog) -> None:
+    def __init__(self, plant: Plant, entity, name: str, event_log: EventLog) -> None:
         super().__init__(plant, entity, name)
-        self._care_log = care_log
+        self._event_log = event_log
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(
@@ -90,19 +101,19 @@ class CareDaysSinceSensor(_CareDrivenSensor):
     _attr_native_unit_of_measurement = "d"
     _attr_state_class = SensorStateClass.MEASUREMENT
 
-    def __init__(self, plant: Plant, task: CareTask, care_log: CareLog) -> None:
+    def __init__(self, plant: Plant, task: CareTask, event_log: EventLog) -> None:
         super().__init__(
             plant,
             naming.care_days_since(plant, task),
             f"{plant.display} {task.display.lower()} days since",
-            care_log,
+            event_log,
         )
         self._task = task
         self._attr_icon = task.icon
 
     @property
     def native_value(self) -> float | None:
-        return self._care_log.days_since(
+        return self._event_log.care_days_since(
             self._plant.name, self._task.task, dt_util.utcnow()
         )
 
@@ -111,18 +122,37 @@ class CareDaysSinceSensor(_CareDrivenSensor):
         return {"every_days": self._task.every_days}
 
 
-def _care_items(plant: Plant, care_log: CareLog) -> list[dict[str, Any]]:
+def _items_for(
+    plant: Plant,
+    event_log: EventLog,
+    coordinator: MoistureCoordinator | None,
+) -> list[dict[str, Any]]:
     """Everything this plant currently needs, as plain dicts.
 
     Plain dicts because this becomes a state attribute, and a consumer — a
     dashboard card now, a task-system bridge later — should not have to know
     anything about this component's types to read it.
+
+    `kind` separates the two sources: `needs_water` is detected by a probe,
+    `care` is a schedule someone has to act on. A consumer that treats them
+    identically still works; one that wants to route them differently can.
     """
     now = dt_util.utcnow()
     items: list[dict[str, Any]] = []
 
+    if coordinator is not None and coordinator.needs_water:
+        items.append(
+            {
+                "plant": plant.name,
+                "name": plant.display,
+                "kind": "needs_water",
+                "label": "Needs water",
+                "days": event_log.days_since_watered(plant.name, now),
+            }
+        )
+
     for task in plant.care:
-        days = care_log.days_since(plant.name, task.task, now)
+        days = event_log.care_days_since(plant.name, task.task, now)
         if not task.is_overdue(days):
             continue
         items.append(
@@ -146,18 +176,32 @@ class PlantAttentionSensor(_CareDrivenSensor):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:alert-circle-outline"
 
-    def __init__(self, plant: Plant, care_log: CareLog) -> None:
+    def __init__(
+        self,
+        plant: Plant,
+        event_log: EventLog,
+        coordinator: MoistureCoordinator | None,
+    ) -> None:
         super().__init__(
-            plant, naming.attention(plant), f"{plant.display} attention", care_log
+            plant, naming.attention(plant), f"{plant.display} attention", event_log
         )
+        self._coordinator = coordinator
+
+    async def async_added_to_hass(self) -> None:
+        await super().async_added_to_hass()
+        # Also re-read when the probe moves: needs-water is one of the items.
+        if self._coordinator is not None:
+            self.async_on_remove(
+                self._coordinator.async_add_listener(self._handle_update)
+            )
 
     @property
     def native_value(self) -> int:
-        return len(_care_items(self._plant, self._care_log))
+        return len(_items_for(self._plant, self._event_log, self._coordinator))
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {ATTR_ITEMS: _care_items(self._plant, self._care_log)}
+        return {ATTR_ITEMS: _items_for(self._plant, self._event_log, self._coordinator)}
 
 
 class OutstandingSensor(SensorEntity):
@@ -176,13 +220,19 @@ class OutstandingSensor(SensorEntity):
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:format-list-checks"
 
-    def __init__(self, plants: tuple[Plant, ...], care_log: CareLog) -> None:
+    def __init__(
+        self,
+        plants: tuple[Plant, ...],
+        event_log: EventLog,
+        coordinators: Mapping[str, MoistureCoordinator],
+    ) -> None:
         entity = naming.outstanding()
         self.entity_id = entity.full
         self._attr_unique_id = entity.full
         self._attr_name = "Plants outstanding"
         self._plants = plants
-        self._care_log = care_log
+        self._event_log = event_log
+        self._coordinators = coordinators
 
     async def async_added_to_hass(self) -> None:
         self.async_on_remove(
@@ -195,6 +245,8 @@ class OutstandingSensor(SensorEntity):
                 self.hass, self._handle_interval, RECOMPUTE_INTERVAL
             )
         )
+        for coordinator in self._coordinators.values():
+            self.async_on_remove(coordinator.async_add_listener(self._handle_update))
 
     @callback
     def _handle_update(self) -> None:
@@ -207,7 +259,9 @@ class OutstandingSensor(SensorEntity):
     def _items(self) -> list[dict[str, Any]]:
         items: list[dict[str, Any]] = []
         for plant in self._plants:
-            items.extend(_care_items(plant, self._care_log))
+            items.extend(
+                _items_for(plant, self._event_log, self._coordinators.get(plant.name))
+            )
         return items
 
     @property

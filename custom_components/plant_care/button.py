@@ -26,7 +26,7 @@ from homeassistant.util import dt as dt_util
 from .const import ATTR_PLANT, ATTR_TASK, DOMAIN, SIGNAL_CARE_UPDATED
 from .entity import PlantEntity
 from .model import CareTask, Plant, naming
-from .store import CareLog
+from .store import EventLog
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -42,26 +42,28 @@ async def async_setup_platform(
 
     data = hass.data[DOMAIN]
     async_add_entities(
-        CareDoneButton(plant, task, data.care_log)
+        CareDoneButton(plant, task, data.event_log)
         for plant in data.plants
         for task in plant.care
     )
 
 
 class CareDoneButton(PlantEntity, ButtonEntity):
-    def __init__(self, plant: Plant, task: CareTask, care_log: CareLog) -> None:
+    def __init__(self, plant: Plant, task: CareTask, event_log: EventLog) -> None:
         super().__init__(
             plant,
             naming.care_done(plant, task),
             f"{plant.display} {task.display.lower()} done",
         )
         self._task = task
-        self._care_log = care_log
+        self._event_log = event_log
         self._attr_icon = task.icon
 
     async def async_press(self) -> None:
         now = dt_util.utcnow()
-        await self._care_log.async_mark_done(self._plant.name, self._task.task, now)
+        await self._event_log.async_mark_care_done(
+            self._plant.name, self._task.task, now
+        )
         _LOGGER.debug(
             "plant_care: %s %s marked done at %s",
             self._plant.name,

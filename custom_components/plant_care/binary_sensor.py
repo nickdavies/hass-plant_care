@@ -15,8 +15,9 @@ from homeassistant.util import dt as dt_util
 
 from .const import DOMAIN, SIGNAL_CARE_UPDATED
 from .entity import PlantEntity
-from .model import CareTask, Plant, naming
-from .store import CareLog
+from .model import Calibrated, CareTask, Plant, naming
+from .moisture_entities import NeedsWaterBinarySensor
+from .store import EventLog
 
 RECOMPUTE_INTERVAL = timedelta(minutes=30)
 
@@ -31,11 +32,21 @@ async def async_setup_platform(
         return
 
     data = hass.data[DOMAIN]
-    async_add_entities(
-        CareDueBinarySensor(plant, task, data.care_log)
-        for plant in data.plants
-        for task in plant.care
-    )
+
+    entities: list[BinarySensorEntity] = []
+    for plant in data.plants:
+        entities.extend(
+            CareDueBinarySensor(plant, task, data.event_log) for task in plant.care
+        )
+        # Only a calibrated plant gets one: without both measured endpoints
+        # there is no threshold that was not invented.
+        coordinator = data.coordinators.get(plant.name)
+        if coordinator is not None and isinstance(
+            plant.moisture.calibration, Calibrated
+        ):
+            entities.append(NeedsWaterBinarySensor(coordinator))
+
+    async_add_entities(entities)
 
 
 class CareDueBinarySensor(PlantEntity, BinarySensorEntity):
@@ -47,14 +58,14 @@ class CareDueBinarySensor(PlantEntity, BinarySensorEntity):
     rather than re-derived here and in the feed.
     """
 
-    def __init__(self, plant: Plant, task: CareTask, care_log: CareLog) -> None:
+    def __init__(self, plant: Plant, task: CareTask, event_log: EventLog) -> None:
         super().__init__(
             plant,
             naming.care_due(plant, task),
             f"{plant.display} {task.display.lower()} due",
         )
         self._task = task
-        self._care_log = care_log
+        self._event_log = event_log
         self._attr_icon = task.icon
 
     async def async_added_to_hass(self) -> None:
@@ -79,7 +90,7 @@ class CareDueBinarySensor(PlantEntity, BinarySensorEntity):
 
     @property
     def is_on(self) -> bool:
-        days = self._care_log.days_since(
+        days = self._event_log.care_days_since(
             self._plant.name, self._task.task, dt_util.utcnow()
         )
         return self._task.is_overdue(days)

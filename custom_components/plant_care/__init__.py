@@ -27,11 +27,13 @@ import voluptuous as vol
 
 from .const import DOMAIN
 from .model import DEFAULT_POLICY, Plant, Policy, parse, schema
-from .store import STORAGE_KEY, STORAGE_VERSION, CareLog
+from .store import STORAGE_KEY, STORAGE_VERSION, EventLog
 
 if TYPE_CHECKING:
     from homeassistant.core import HomeAssistant
     from homeassistant.helpers.typing import ConfigType
+
+    from .moisture import MoistureCoordinator
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -57,7 +59,9 @@ class PlantCareData:
 
     plants: tuple[Plant, ...]
     policy: Policy
-    care_log: CareLog
+    event_log: EventLog
+    coordinators: Mapping[str, MoistureCoordinator]
+    """Keyed by plant name. Only plants with a probe have one."""
 
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
@@ -66,6 +70,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     from homeassistant.helpers.storage import Store
 
     from .dashboards import PlantsDashboard
+    from .moisture import MoistureCoordinator
 
     domain_config: Mapping[str, Any] | None = config.get(DOMAIN)
     if domain_config is None:
@@ -76,13 +81,27 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     # shows up as a plant nobody watered.
     plants = parse(domain_config)
 
-    care_log = CareLog(Store(hass, STORAGE_VERSION, STORAGE_KEY))
-    await care_log.async_load()
+    event_log = EventLog(Store(hass, STORAGE_VERSION, STORAGE_KEY))
+    await event_log.async_load()
+
+    # Coordinators are started here rather than by an entity, so a plant that is
+    # still calibrating — and therefore has no needs-water entity — is monitored
+    # just the same.
+    coordinators: dict[str, MoistureCoordinator] = {}
+    for plant in plants:
+        if plant.moisture is None:
+            continue
+        coordinator = MoistureCoordinator(
+            hass, plant, plant.moisture, DEFAULT_POLICY, event_log
+        )
+        await coordinator.async_start()
+        coordinators[plant.name] = coordinator
 
     hass.data[DOMAIN] = PlantCareData(
         plants=plants,
         policy=DEFAULT_POLICY,
-        care_log=care_log,
+        event_log=event_log,
+        coordinators=coordinators,
     )
 
     _LOGGER.debug(

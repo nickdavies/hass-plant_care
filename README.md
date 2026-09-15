@@ -4,8 +4,10 @@ A Home Assistant component for running a plant-care operation: moisture
 monitoring, watering detection, recurring care tasks, and one consolidated feed
 of everything outstanding.
 
-**Status: in progress.** The model and config layers are done and tested; the
-entity platforms are not written yet.
+**Status: in progress.** Moisture monitoring, watering detection, care tasks and
+the outstanding feed all work and are tested. Hardware health checks (battery,
+stale probe, waterlogging, watering shortfall), grow lights and the DLI SLO are
+not written yet.
 
 ## Why this exists
 
@@ -69,3 +71,13 @@ sees a watering by anyone, with no phone nearby, so a watering button would be a
 worse second source of truth. The generator enforces this by refusing to
 schedule a detectable task on a plant that can detect it; buttons exist only for
 feeding, pest checks and the like.
+
+**Needs-water is a latch, cleared only by a detected watering.** Moisture
+drifting up on its own — a cool night, a probe settling back into the soil — is
+not someone having watered the plant. The asymmetry is the point.
+
+**The coordinator subscribes to `state_reported` as well as `state_changed`, and
+reads `last_reported`.** A pot sitting still reports the same number for hours;
+Home Assistant fires no state *change* for that, and `last_updated` would hand
+every repeat the timestamp of the first one. Either mistake stalls the confirm
+clock so a dry plant never flags. Both are covered by tests.

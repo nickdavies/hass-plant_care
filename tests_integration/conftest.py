@@ -117,6 +117,16 @@ async def press(hass: HomeAssistant, entity_id: str) -> None:
     await hass.async_block_till_done()
 
 
+async def probe_reports(hass: HomeAssistant, entity_id: str, value: float) -> None:
+    """Stand in for zigbee2mqtt publishing a reading.
+
+    Set through the state machine rather than by calling the coordinator, so the
+    subscription itself is part of what is being tested.
+    """
+    hass.states.async_set(entity_id, str(value))
+    await hass.async_block_till_done()
+
+
 def _ensure_custom_components_path() -> None:
     """Put this project's custom_components on the namespace path.
 
