@@ -1,0 +1,42 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  lint:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install ruff
+      - run: ruff check custom_components/ tests/ tests_integration/
+      - run: ruff format --check custom_components/ tests/ tests_integration/
+
+  # The model imports no Home Assistant, so these need nothing but pytest and
+  # voluptuous. tests/test_no_ha_imports.py is what keeps that true: install HA
+  # here and a stray import would stop being caught.
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install pytest voluptuous
+      - run: python -m pytest tests/ -v -c tests/pytest.ini
+
+  integration:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+      - run: pip install pytest pytest-homeassistant-custom-component voluptuous tzdata
+      - run: python -m pytest tests_integration/ -v -c tests_integration/pytest.ini
