@@ -106,8 +106,11 @@ POT_WATER_DONE = "button.plant_front_step_pot_water_done"
 
 OUTSTANDING = "sensor.plant_outstanding"
 
-# The probe entity the component reads but never creates.
+# Probe entities the component reads but never creates. In reality these come
+# from zigbee2mqtt via MQTT discovery; the generator resolved their ids.
 PASSIONFRUIT_RAW = "sensor.roam_sensor_moisture_1_soil_moisture"
+PASSIONFRUIT_BATTERY = "sensor.roam_sensor_moisture_1_battery"
+MONSTERA_RAW = "sensor.nick_study_sensor_monstera_window_soil_moisture"
 
 
 async def press(hass: HomeAssistant, entity_id: str) -> None:
@@ -144,9 +147,12 @@ def _ensure_custom_components_path() -> None:
 @pytest.fixture
 async def integration(hass: HomeAssistant) -> HomeAssistant:
     """Set up the component with the fixture config."""
-    # The probe entities belong to zigbee2mqtt in reality; here they just need
-    # to exist so nothing reads an entity that was never created.
+    # Every probe reports before setup. Leaving one out is not a neutral
+    # simplification — a probe that has never reported is a *fault*, and the
+    # plant correctly shows up in the feed as silent.
     hass.states.async_set(PASSIONFRUIT_RAW, "60.0")
+    hass.states.async_set(PASSIONFRUIT_BATTERY, "85")
+    hass.states.async_set(MONSTERA_RAW, "50.0")
 
     hass.data.pop(DATA_CUSTOM_COMPONENTS, None)
     _ensure_custom_components_path()

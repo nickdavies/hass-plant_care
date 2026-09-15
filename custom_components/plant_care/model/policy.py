@@ -67,6 +67,31 @@ class Policy:
     """Missed reports before a probe is treated as not reporting. Generous
     enough to ride out a zigbee2mqtt restart or a Flux redeploy."""
 
+    # ---- Health checks -------------------------------------------------
+
+    battery_low_pct: float = 15.0
+    """Enough warning to find a battery before the probe goes silent."""
+
+    stuck_hours: int = 12
+    """Reporting fine, but the value has not moved.
+
+    An actively transpiring pot always drifts downward. A perfectly flat reading
+    means the probe is out of the soil, has lost contact, or its firmware has
+    wedged — none of which look like anything from a threshold's point of view.
+    """
+
+    waterlogged_hours: int = 24
+    """Sitting above field capacity this long. The pot is not draining, or it is
+    standing in its own runoff."""
+
+    shortfall_settle_minutes: int = 60
+    """How long after a watering to judge whether it worked.
+
+    The same hour the calibration protocol uses to read field capacity, so the
+    comparison is like with like. Any other interval would be measuring against
+    a number taken differently.
+    """
+
     # ---- Derived from probe facts -------------------------------------
 
     def median_window_hours(self, probe: ProbeFacts) -> int:

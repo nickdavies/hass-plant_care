@@ -15,6 +15,7 @@ import statistics
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from .health import HealthIssue, IssueKind
 from .plant import Calibrated, Calibration, ProbeFacts
 from .policy import Policy
 
@@ -111,6 +112,15 @@ class MoistureMonitor:
     _needs_water: bool = field(init=False, default=False)
     _last_watered: datetime | None = field(init=False, default=None)
 
+    # Health-check state. Tracked here rather than recomputed because each of
+    # these is about *duration*, and a rolling window one hour long cannot say
+    # how long something has been true for twelve.
+    _last_change: Reading | None = field(init=False, default=None)
+    _above_fc_since: datetime | None = field(init=False, default=None)
+    _settle_due: datetime | None = field(init=False, default=None)
+    _shortfall: float | None = field(init=False, default=None)
+    _started_at: datetime | None = field(init=False, default=None)
+
     def __post_init__(self) -> None:
         self._window = RollingWindow(
             window=timedelta(hours=self.policy.median_window_hours(self.probe)),
@@ -119,7 +129,12 @@ class MoistureMonitor:
 
     # ---- Restoring across a restart ------------------------------------
 
-    def restore(self, needs_water: bool, last_watered: datetime | None) -> None:
+    def restore(
+        self,
+        needs_water: bool,
+        last_watered: datetime | None,
+        now: datetime | None = None,
+    ) -> None:
         """Re-adopt the latch after a restart.
 
         The rolling window is deliberately **not** restored: it would be stale,
@@ -129,9 +144,24 @@ class MoistureMonitor:
 
         That costs a delay and never a missed flag, because a plant already
         flagged stays flagged — which is the direction worth being wrong in.
+
+        A watering still inside its settle window *is* re-armed, so a restart
+        during that hour does not quietly skip the shortfall check — which would
+        be the one time it matters most, since a redeploy right after watering
+        is exactly when you are stood over the pot.
         """
         self._needs_water = needs_water
         self._last_watered = last_watered
+        # Silence is measured from here until the first reading arrives. On a
+        # cold start MQTT discovery has not created the probe entities yet, so
+        # without this every plant would report a silent probe for the first few
+        # seconds of every Home Assistant restart.
+        self._started_at = now
+
+        if last_watered is not None and now is not None:
+            settle = timedelta(minutes=self.policy.shortfall_settle_minutes)
+            if now - last_watered < settle:
+                self._settle_due = last_watered + settle
 
     # ---- Observing -----------------------------------------------------
 
@@ -142,18 +172,68 @@ class MoistureMonitor:
         not on the smoothed one, so a watering clears the flag immediately
         rather than a window later.
         """
+        previous = self._last
         self._window.add(Reading(when, value))
         self._last = Reading(when, value)
+
+        # "The value has not moved" needs the last time it actually moved, which
+        # is not the last time it was reported — a wedged probe heartbeats
+        # perfectly and repeats one number.
+        if previous is None or previous.value != value:
+            self._last_change = Reading(when, value)
 
         watered = self._detect_watering(value)
         if watered:
             self._last_watered = when
             self._needs_water = False
             self._below_since = None
+            self._shortfall = None
+            self._settle_due = when + timedelta(
+                minutes=self.policy.shortfall_settle_minutes
+            )
         else:
             self._evaluate_dry(when)
 
+        self._evaluate_settle(when, value)
+        self._track_waterlogging(when)
+
         return watered
+
+    def _evaluate_settle(self, when: datetime, value: float) -> None:
+        """An hour after a watering, did the water actually reach the roots?
+
+        Dried peat mixes go hydrophobic and shed water down the gap between
+        rootball and pot wall, straight out the drainage holes. The pot feels
+        watered, the runoff looks convincing, and the core stays dry.
+
+        Piggybacks on the next reading past the settle window rather than
+        running a timer: readings arrive every few minutes anyway, and a timer
+        would be one more thing to lose across a restart.
+
+        Note what this cannot see. *Complete* channelling produces no rise, so no
+        watering is detected and this never runs. That case is caught by the
+        needs-water latch never clearing — which is why the latch is cleared
+        only by a detected watering and not by moisture drifting up.
+        """
+        if self._settle_due is None or when < self._settle_due:
+            return
+        if not isinstance(self.calibration, Calibrated):
+            self._settle_due = None
+            return
+
+        target = self.policy.fc_shortfall_target(self.calibration)
+        self._shortfall = value if value < target else None
+        self._settle_due = None
+
+    def _track_waterlogging(self, when: datetime) -> None:
+        if not isinstance(self.calibration, Calibrated):
+            return
+
+        smoothed = self._window.median()
+        if smoothed is None or smoothed <= self.calibration.field_capacity:
+            self._above_fc_since = None
+        elif self._above_fc_since is None:
+            self._above_fc_since = when
 
     def _detect_watering(self, value: float) -> bool:
         if not isinstance(self.calibration, Calibrated):
@@ -221,3 +301,94 @@ class MoistureMonitor:
     @property
     def has_data(self) -> bool:
         return len(self._window) > 0
+
+    def health(self, now: datetime) -> list[HealthIssue]:
+        """Faults that would otherwise read as healthy soil.
+
+        Evaluated against an injected `now` rather than the clock, so every
+        duration here — twelve hours stuck, twenty-four waterlogged — is
+        testable without waiting.
+
+        Battery is not here: it belongs to a different entity, and this type
+        only sees moisture readings.
+        """
+        issues: list[HealthIssue] = []
+
+        stale = timedelta(hours=self.policy.stale_hours(self.probe))
+        # Before the first reading, silence is measured from when this started
+        # listening. With neither, there is no clock to judge against and
+        # claiming a fault would be guessing.
+        since = self._last.when if self._last is not None else self._started_at
+        silent_for = None if since is None else now - since
+
+        # Covers both a probe gone `unavailable` and one that holds a plausible
+        # number forever because zigbee2mqtt publishes bridge availability
+        # rather than per-device: such a probe never goes unavailable, it just
+        # stops talking, and the last reading sits there looking fine.
+        if silent_for is not None and silent_for >= stale:
+            hours = round(silent_for.total_seconds() / 3600, 1)
+            issues.append(
+                HealthIssue(
+                    kind=IssueKind.PROBE_SILENT,
+                    label="Probe not reporting",
+                    detail=(
+                        "Nothing can tell whether this plant needs water until the "
+                        "probe is back. Check the battery and that zigbee2mqtt still "
+                        "sees it."
+                    ),
+                    value=hours,
+                )
+            )
+            # Everything below infers from readings, and there are none worth
+            # trusting. Reporting a stuck probe on top of a silent one would be
+            # two alerts for one fault.
+            return issues
+
+        if self._last_change is not None:
+            unchanged = now - self._last_change.when
+            if unchanged >= timedelta(hours=self.policy.stuck_hours):
+                issues.append(
+                    HealthIssue(
+                        kind=IssueKind.PROBE_STUCK,
+                        label="Probe reading is stuck",
+                        detail=(
+                            "A pot in use always drifts as it dries. A perfectly flat "
+                            "reading means the probe is out of the soil, has lost "
+                            "contact, or its firmware has wedged."
+                        ),
+                        value=round(unchanged.total_seconds() / 3600, 1),
+                    )
+                )
+
+        if self._above_fc_since is not None:
+            wet_for = now - self._above_fc_since
+            if wet_for >= timedelta(hours=self.policy.waterlogged_hours):
+                issues.append(
+                    HealthIssue(
+                        kind=IssueKind.WATERLOGGED,
+                        label="Not draining",
+                        detail=(
+                            "Soil has sat above field capacity. Check the pot is not "
+                            "standing in its own runoff and the drainage holes are clear."
+                        ),
+                        value=round(wet_for.total_seconds() / 3600, 1),
+                    )
+                )
+
+        if self._shortfall is not None and isinstance(self.calibration, Calibrated):
+            target = self.policy.fc_shortfall_target(self.calibration)
+            issues.append(
+                HealthIssue(
+                    kind=IssueKind.WATERING_SHORTFALL,
+                    label="Watering fell short",
+                    detail=(
+                        f"An hour after watering the soil settled at "
+                        f"{self._shortfall:.1f}%, below the {target:.1f}% it should "
+                        "reach. Water probably channelled down the side — try again "
+                        "slowly, or soak the pot from below."
+                    ),
+                    value=round(self._shortfall, 1),
+                )
+            )
+
+        return issues

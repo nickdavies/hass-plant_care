@@ -133,12 +133,21 @@ def _items_for(
     dashboard card now, a task-system bridge later — should not have to know
     anything about this component's types to read it.
 
-    `kind` separates the two sources: `needs_water` is detected by a probe,
-    `care` is a schedule someone has to act on. A consumer that treats them
-    identically still works; one that wants to route them differently can.
+    `kind` separates the sources: `needs_water` is detected by a probe, `care` is
+    a schedule someone has to act on, and the health kinds are faults. A consumer
+    that treats them identically still works; one that wants to route them
+    differently can.
+
+    Faults come first. A silent probe means nothing else about this plant can be
+    believed, so it should not be buried under three overdue feedings.
     """
     now = dt_util.utcnow()
     items: list[dict[str, Any]] = []
+
+    if coordinator is not None:
+        items.extend(
+            issue.as_item(plant.name, plant.display) for issue in coordinator.health()
+        )
 
     if coordinator is not None and coordinator.needs_water:
         items.append(

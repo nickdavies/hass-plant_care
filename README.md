@@ -4,10 +4,10 @@ A Home Assistant component for running a plant-care operation: moisture
 monitoring, watering detection, recurring care tasks, and one consolidated feed
 of everything outstanding.
 
-**Status: in progress.** Moisture monitoring, watering detection, care tasks and
-the outstanding feed all work and are tested. Hardware health checks (battery,
-stale probe, waterlogging, watering shortfall), grow lights and the DLI SLO are
-not written yet.
+**Status: in progress.** Moisture monitoring, watering detection, care tasks,
+health checks and the outstanding feed all work and are tested. Grow lights and
+the DLI SLO are not written yet — they need the generator to grow lights and lux
+fixtures first.
 
 ## Why this exists
 
@@ -81,3 +81,15 @@ reads `last_reported`.** A pot sitting still reports the same number for hours;
 Home Assistant fires no state *change* for that, and `last_updated` would hand
 every repeat the timestamp of the first one. Either mistake stalls the confirm
 clock so a dry plant never flags. Both are covered by tests.
+
+**Health checks report faults whose failure mode is silence.** A flat battery, a
+probe knocked out of the soil, or water channelling down the side of a dried-out
+rootball all look exactly like stable healthy soil to anything watching a
+threshold. They go into the same feed as care items, faults first, because a
+silent probe means nothing else about that plant can be believed.
+
+The watering-shortfall check has a known blind spot worth stating: it only runs
+on a *detected* watering, and complete channelling produces no rise to detect.
+That case is caught instead by the needs-water latch never clearing — which is
+why the latch is cleared only by a detected watering, never by moisture drifting
+up on its own. There is a test named after it.

@@ -29,6 +29,7 @@ from homeassistant.helpers.event import (
 from homeassistant.util import dt as dt_util
 
 from .model import Moisture, Plant, Policy
+from .model.health import HealthIssue, IssueKind
 from .model.signals import MoistureMonitor, MoistureSignals
 from .store import EventLog
 
@@ -54,6 +55,7 @@ class MoistureCoordinator:
         self._plant = plant
         self._moisture = moisture
         self._event_log = event_log
+        self._policy = policy
         self._listeners: list[Callable[[], None]] = []
         self._unsubs: list[Callable[[], None]] = []
         self.monitor = MoistureMonitor(
@@ -71,6 +73,43 @@ class MoistureCoordinator:
     @property
     def needs_water(self) -> bool:
         return self.monitor.needs_water
+
+    def health(self) -> list[HealthIssue]:
+        """Every fault for this plant, moisture and battery together.
+
+        Battery is checked here rather than in the monitor because it is a
+        different entity — the monitor only ever sees moisture readings. It is
+        read live rather than tracked, since a battery percentage needs no
+        history to interpret.
+        """
+        issues = self.monitor.health(dt_util.utcnow())
+
+        battery = self._battery_pct()
+        if battery is not None and battery < self._policy.battery_low_pct:
+            issues.append(
+                HealthIssue(
+                    kind=IssueKind.BATTERY_LOW,
+                    label="Probe battery low",
+                    detail=(
+                        f"Soil probe battery at {battery:.0f}%. Replace it before the "
+                        "probe goes silent and the plant stops being monitored."
+                    ),
+                    value=round(battery, 1),
+                )
+            )
+
+        return issues
+
+    def _battery_pct(self) -> float | None:
+        if self._moisture.battery_entity is None:
+            return None
+        state = self._hass.states.get(self._moisture.battery_entity.entity_id)
+        if state is None or state.state in NON_VALUES:
+            return None
+        try:
+            return float(state.state)
+        except (TypeError, ValueError):
+            return None
 
     def async_add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
         self._listeners.append(listener)
@@ -95,6 +134,7 @@ class MoistureCoordinator:
         self.monitor.restore(
             needs_water=self._event_log.needs_water(self._plant.name),
             last_watered=self._event_log.last_watered(self._plant.name),
+            now=dt_util.utcnow(),
         )
 
         entity_id = self._moisture.moisture_entity.entity_id

@@ -159,7 +159,17 @@ class TestNeedsWaterReachesTheFeed:
         await probe_reports(integration, PASSIONFRUIT_RAW, 78.0)
 
         assert integration.states.get(NEEDS_WATER).state == "off"
-        assert integration.states.get(OUTSTANDING).attributes["items"] == []
+
+        # Only this plant's thirst should have cleared. The other plants' probes
+        # are not being fed during this test, so they legitimately go silent —
+        # asserting the whole feed is empty would be asserting the health checks
+        # do not work.
+        items = integration.states.get(OUTSTANDING).attributes["items"]
+        assert not [
+            item
+            for item in items
+            if item["plant"] == "passionfruit" and item["kind"] == "needs_water"
+        ]
 
     async def test_the_threshold_is_published_for_inspection(
         self, integration: HomeAssistant
