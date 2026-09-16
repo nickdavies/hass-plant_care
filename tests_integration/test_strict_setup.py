@@ -118,3 +118,32 @@ class TestAbsentMeansCalibrating:
         config = copy.deepcopy(TEST_CONFIG)
         config[DOMAIN]["plants"][0].pop(absent_field, None)
         assert await _try_setup(hass, config)
+
+
+class TestTheEmptyDocument:
+    """`plants: []` is what hass-configs' CI writes in place of the generated
+    document, so this exact shape has to set up cleanly.
+
+    It is also the first thing the cluster sees: the ConfigMap exists before any
+    plant is in it. Falling over on an empty list would turn "nothing configured
+    yet" into a Home Assistant that will not start.
+    """
+
+    async def test_it_sets_up(self, hass: HomeAssistant) -> None:
+        assert await _try_setup(hass, {DOMAIN: {"plants": []}})
+
+    async def test_the_feed_exists_and_is_empty(self, hass: HomeAssistant) -> None:
+        """Rather than absent — a consumer reading the feed should find nothing
+        outstanding, not an entity that does not exist."""
+        assert await _try_setup(hass, {DOMAIN: {"plants": []}})
+
+        state = hass.states.get("sensor.plant_outstanding")
+        assert state is not None
+        assert state.state == "0"
+        assert state.attributes["items"] == []
+
+    async def test_the_dashboard_still_renders(self, hass: HomeAssistant) -> None:
+        assert await _try_setup(hass, {DOMAIN: {"plants": []}})
+
+        config = await hass.data["lovelace"].dashboards["plants"].async_load(False)
+        assert config["views"]
