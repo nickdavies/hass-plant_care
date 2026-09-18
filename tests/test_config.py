@@ -40,11 +40,15 @@ CALIBRATED_PLANT: dict[str, Any] = {
             "temperature": "sensor.roam_sensor_moisture_1_temperature",
             "battery": "sensor.roam_sensor_moisture_1_battery",
         },
-        "probe": {"heartbeatMinutes": 10, "deadbandPp": 1.0},
-        "calibration": {"fieldCapacity": 79.54, "dryPoint": 53.18, "fcTolerance": 8.0},
+        "probe": {"heartbeat_minutes": 10, "deadband_pp": 1.0},
+        "calibration": {
+            "field_capacity": 79.54,
+            "dry_point": 53.18,
+            "fc_tolerance": 8.0,
+        },
     },
     "care": [
-        {"task": "feed", "display": "Feed", "icon": "mdi:nutrition", "everyDays": 14}
+        {"task": "feed", "display": "Feed", "icon": "mdi:nutrition", "every_days": 14}
     ],
 }
 
@@ -55,7 +59,7 @@ CALIBRATING_PLANT: dict[str, Any] = {
         "entities": {
             "moisture": "sensor.nick_study_sensor_monstera_window_soil_moisture"
         },
-        "probe": {"heartbeatMinutes": 10, "deadbandPp": 1.0},
+        "probe": {"heartbeat_minutes": 10, "deadband_pp": 1.0},
     },
 }
 
@@ -67,7 +71,7 @@ SENSORLESS_PLANT: dict[str, Any] = {
             "task": "water",
             "display": "Water",
             "icon": "mdi:watering-can",
-            "everyDays": 4,
+            "every_days": 4,
         }
     ],
 }
@@ -116,7 +120,7 @@ class TestCalibrationContract:
             **CALIBRATED_PLANT,
             "moisture": {
                 **CALIBRATED_PLANT["moisture"],
-                "calibration": {"fieldCapacity": 79.54, "dryPoint": 53.18},
+                "calibration": {"field_capacity": 79.54, "dry_point": 53.18},
             },
         }
         (plant,) = load(plant_data)
@@ -131,7 +135,7 @@ class TestStrictness:
             **CALIBRATED_PLANT,
             "moisture": {
                 **CALIBRATED_PLANT["moisture"],
-                "calibration": {"fieldCapacity": 79.54},
+                "calibration": {"field_capacity": 79.54},
             },
         }
         with pytest.raises(vol.Invalid):
@@ -142,7 +146,7 @@ class TestStrictness:
             **CALIBRATED_PLANT,
             "moisture": {
                 **CALIBRATED_PLANT["moisture"],
-                "calibration": {"fieldCapacity": 50.0, "dryPoint": 60.0},
+                "calibration": {"field_capacity": 50.0, "dry_point": 60.0},
             },
         }
         with pytest.raises(InvalidPlantConfig, match="passionfruit"):
@@ -168,7 +172,7 @@ class TestStrictness:
             **CALIBRATING_PLANT,
             "moisture": {
                 **CALIBRATING_PLANT["moisture"],
-                "source": "nick_study.sensors.monstera_window",
+                "source": {"room": "nick_study", "name": "monstera_window"},
             },
         }
         with pytest.raises(vol.Invalid):
@@ -190,7 +194,7 @@ class TestStrictness:
             **CALIBRATING_PLANT,
             "moisture": {
                 **CALIBRATING_PLANT["moisture"],
-                "probe": {"heartbeatMinutes": 0, "deadbandPp": 1.0},
+                "probe": {"heartbeat_minutes": 0, "deadband_pp": 1.0},
             },
         }
         with pytest.raises(vol.Invalid):
@@ -207,7 +211,7 @@ class TestStrictness:
             load(
                 {
                     **SENSORLESS_PLANT,
-                    "care": [{**SENSORLESS_PLANT["care"][0], "everyDays": 0}],
+                    "care": [{**SENSORLESS_PLANT["care"][0], "every_days": 0}],
                 }
             )
 
@@ -246,16 +250,15 @@ class TestOptionalStructure:
 
 STUDY_LIGHT: dict[str, Any] = {
     "name": "study_shelf",
-    "source": "nick_study.outlets.sansi_100w_lamp",
     "switch": "switch.nick_study_outlet_sansi_100w_lamp",
     "room": "nick_study",
-    "luxToPpfd": 0.0125,
+    "lux_to_ppfd": 0.0125,
     "window": {
-        "mode": "awakeAware",
-        "ifAwakeFrom": "06:00",
-        "noLaterThan": "09:00",
-        "notBefore": "17:00",
-        "until": "19:00",
+        "mode": "awake_aware",
+        "on_if_awake_after": "06:00",
+        "on_after": "09:00",
+        "on_even_if_asleep_until": "17:00",
+        "on_until": "19:00",
         "presence": "sensor.person_presence_nick",
     },
 }
@@ -263,15 +266,15 @@ STUDY_LIGHT: dict[str, Any] = {
 STUDY_LUX: dict[str, Any] = {
     "name": "study_shelf",
     "entities": ["sensor.esphome_study_lux_1", "sensor.esphome_study_lux_2"],
-    "sunLuxToPpfd": 0.0185,
+    "sun_lux_to_ppfd": 0.0185,
 }
 
 DLI: dict[str, Any] = {
     "category": "foliage_tropical",
     "preferred": {"low": 4.0, "high": 9.0},
     "survival": {"low": 2.0, "high": 20.0},
-    "preferredOverridden": False,
-    "windowDays": 28,
+    "preferred_overridden": False,
+    "window_days": 28,
     "budget": 20.0,
 }
 
@@ -280,7 +283,6 @@ LIT_PLANT: dict[str, Any] = {
     "display": "Monstera",
     "lights": ["study_shelf"],
     "lux": "study_shelf",
-    "lightSource": "mixed",
     "dli": DLI,
 }
 
@@ -293,7 +295,7 @@ def load_lights(
     doc = schema()(
         {
             "lights": lights if lights is not None else [STUDY_LIGHT],
-            "luxSensors": lux if lux is not None else [STUDY_LUX],
+            "lux_sensors": lux if lux is not None else [STUDY_LUX],
             "plants": list(plants),
         }
     )
@@ -327,22 +329,22 @@ class TestFixtureReferences:
         continuously, which looks exactly like a plant in a cupboard."""
         plant = {k: v for k, v in LIT_PLANT.items() if k != "lux"}
         with pytest.raises(InvalidPlantConfig, match="nothing would measure"):
-            load_lights({**plant, "lightSource": "grow"})
+            load_lights(plant)
 
     def test_a_mixed_plant_under_a_lamp_with_no_factor_is_rejected(self) -> None:
         """Its lux reading is sun for part of the day and lamp for the rest. A
         lamp that cannot say what its own light is worth makes every DLI figure
         for this plant wrong, quietly, in a direction nobody can guess."""
-        no_factor = {k: v for k, v in STUDY_LIGHT.items() if k != "luxToPpfd"}
-        with pytest.raises(InvalidPlantConfig, match="luxToPpfd"):
+        no_factor = {k: v for k, v in STUDY_LIGHT.items() if k != "lux_to_ppfd"}
+        with pytest.raises(InvalidPlantConfig, match="lux_to_ppfd"):
             load_lights(LIT_PLANT, lights=[no_factor])
 
     def test_a_sun_only_plant_needs_no_lamp_factor(self) -> None:
         """Derived, not configured: nothing is switching, so one factor serves
         the whole day and the requirement does not apply."""
-        no_factor = {k: v for k, v in STUDY_LIGHT.items() if k != "luxToPpfd"}
+        no_factor = {k: v for k, v in STUDY_LIGHT.items() if k != "lux_to_ppfd"}
         sun_only = {k: v for k, v in LIT_PLANT.items() if k != "lights"}
-        config = load_lights({**sun_only, "lightSource": "sun"}, lights=[no_factor])
+        config = load_lights(sun_only, lights=[no_factor])
         assert config.plants[0].light_source is Lit.SUN
         assert not config.plants[0].is_mixed_light
 
@@ -353,8 +355,8 @@ class TestWindowParsing:
         window = config.light("study_shelf").window
         assert isinstance(window, AwakeAwareWindow)
         assert window.presence_entity == "sensor.person_presence_nick"
-        assert window.if_awake_from == time(6, 0)
-        assert window.until == time(19, 0)
+        assert window.on_if_awake_after == time(6, 0)
+        assert window.on_until == time(19, 0)
 
     def test_a_fixed_window_has_no_presence_at_all(self) -> None:
         fixed = {
@@ -370,12 +372,12 @@ class TestWindowParsing:
     def test_a_half_written_window_names_the_fixture(self) -> None:
         """These messages reach a human reading the log, and "missing notBefore"
         without saying which fixture is most of the way to useless."""
-        broken = {**STUDY_LIGHT, "window": {"mode": "awakeAware", "until": "19:00"}}
+        broken = {**STUDY_LIGHT, "window": {"mode": "awake_aware", "on_until": "19:00"}}
         with pytest.raises(InvalidPlantConfig, match="study_shelf"):
             load_lights(LIT_PLANT, lights=[broken])
 
     def test_an_unknown_window_mode_is_rejected(self) -> None:
-        broken = {**STUDY_LIGHT, "window": {"mode": "auto", "until": "19:00"}}
+        broken = {**STUDY_LIGHT, "window": {"mode": "auto", "on_until": "19:00"}}
         with pytest.raises(vol.Invalid):
             load_lights(LIT_PLANT, lights=[broken])
 
@@ -443,6 +445,20 @@ class TestDliParsing:
         with pytest.raises(vol.Invalid):
             load_lights({**LIT_PLANT, "dli": {**DLI, "budget": 0}})
 
-    def test_an_unknown_light_source_is_rejected(self) -> None:
+    def test_the_light_source_is_derived_not_read(self) -> None:
+        """It is a fact about `lights` and `lux`, both of which are already in
+        the document. Sending it too would be a second spelling of what we have,
+        and the generator's copy of it was in fact wrong — it could never say
+        `grow`. So the schema refuses the key outright."""
         with pytest.raises(vol.Invalid):
-            load_lights({**LIT_PLANT, "lightSource": "moonlight"})
+            load_lights({**LIT_PLANT, "light_source": "mixed"})
+
+        (lit,) = load_lights(LIT_PLANT).plants
+        assert lit.light_source is Lit.MIXED
+
+        grow_only = {k: v for k, v in LIT_PLANT.items() if k not in ("lux", "dli")}
+        (grow,) = load_lights(grow_only).plants
+        assert grow.light_source is Lit.GROW
+
+        (bare,) = load_lights({"name": "pot", "display": "Pot"}).plants
+        assert bare.light_source is None

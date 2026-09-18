@@ -55,7 +55,7 @@ class TestRejectsBadConfig:
         """Both endpoints or neither. One endpoint cannot produce a threshold
         that is not invented."""
         assert not await _try_setup(
-            hass, _with_first_moisture(calibration={"fieldCapacity": 79.54})
+            hass, _with_first_moisture(calibration={"field_capacity": 79.54})
         )
 
     async def test_an_inverted_calibration_is_rejected(
@@ -63,7 +63,9 @@ class TestRejectsBadConfig:
     ) -> None:
         assert not await _try_setup(
             hass,
-            _with_first_moisture(calibration={"fieldCapacity": 50.0, "dryPoint": 60.0}),
+            _with_first_moisture(
+                calibration={"field_capacity": 50.0, "dry_point": 60.0}
+            ),
         )
 
     async def test_a_bare_entity_name_is_rejected(self, hass: HomeAssistant) -> None:
@@ -82,7 +84,7 @@ class TestRejectsBadConfig:
                         "task": "feed",
                         "display": "Feed",
                         "icon": "mdi:nutrition",
-                        "everyDays": 0,
+                        "every_days": 0,
                     }
                 ]
             ),

@@ -201,9 +201,23 @@ class Plant:
     """Only ever set alongside `lux` — an objective nothing measures is checked
     at parse time, not tolerated."""
 
-    light_source: Lit | None = None
-    """`None` when nothing knows anything about this plant's light: no fixture
-    over it and no sensor on it."""
+    @property
+    def light_source(self) -> Lit | None:
+        """Where this plant's light comes from.
+
+        Derived here rather than read from the document, because it is a fact
+        about `lights` and `lux` and the document already carries both. Sending
+        it as well would be a second spelling of something we have, and two
+        spellings can disagree — as they did: the generator's version of this
+        could never produce `GROW`, and nothing noticed, because nothing else
+        had reason to.
+
+        `None` when nothing knows anything about this plant's light: no fixture
+        over it and no sensor on it.
+        """
+        if not self.lights:
+            return Lit.SUN if self.lux else None
+        return Lit.MIXED if self.lux else Lit.GROW
 
     @property
     def is_mixed_light(self) -> bool:

@@ -39,11 +39,11 @@ TEST_CONFIG: dict[str, Any] = {
                         "temperature": "sensor.roam_sensor_moisture_1_temperature",
                         "battery": "sensor.roam_sensor_moisture_1_battery",
                     },
-                    "probe": {"heartbeatMinutes": 10, "deadbandPp": 1.0},
+                    "probe": {"heartbeat_minutes": 10, "deadband_pp": 1.0},
                     "calibration": {
-                        "fieldCapacity": 79.54,
-                        "dryPoint": 53.18,
-                        "fcTolerance": 8.0,
+                        "field_capacity": 79.54,
+                        "dry_point": 53.18,
+                        "fc_tolerance": 8.0,
                     },
                 },
                 "care": [
@@ -51,7 +51,7 @@ TEST_CONFIG: dict[str, Any] = {
                         "task": "feed",
                         "display": "Feed",
                         "icon": "mdi:nutrition",
-                        "everyDays": 14,
+                        "every_days": 14,
                     }
                 ],
             },
@@ -63,14 +63,14 @@ TEST_CONFIG: dict[str, Any] = {
                     "entities": {
                         "moisture": "sensor.nick_study_sensor_monstera_window_soil_moisture"
                     },
-                    "probe": {"heartbeatMinutes": 10, "deadbandPp": 1.0},
+                    "probe": {"heartbeat_minutes": 10, "deadband_pp": 1.0},
                 },
                 "care": [
                     {
                         "task": "pest_check",
                         "display": "Pest check",
                         "icon": "mdi:bug-outline",
-                        "everyDays": 7,
+                        "every_days": 7,
                     }
                 ],
             },
@@ -83,7 +83,7 @@ TEST_CONFIG: dict[str, Any] = {
                         "task": "water",
                         "display": "Water",
                         "icon": "mdi:watering-can",
-                        "everyDays": 4,
+                        "every_days": 4,
                     }
                 ],
             },
@@ -154,33 +154,31 @@ LIGHT_CONFIG: dict[str, Any] = {
         "lights": [
             {
                 "name": "study_shelf",
-                "source": "nick_study.outlets.sansi_100w_lamp",
                 "switch": STUDY_SWITCH,
                 "room": "nick_study",
-                "luxToPpfd": 0.0125,
+                "lux_to_ppfd": 0.0125,
                 "window": {
-                    "mode": "awakeAware",
-                    "ifAwakeFrom": "06:00",
-                    "noLaterThan": "09:00",
-                    "notBefore": "17:00",
-                    "until": "19:00",
+                    "mode": "awake_aware",
+                    "on_if_awake_after": "06:00",
+                    "on_after": "09:00",
+                    "on_even_if_asleep_until": "17:00",
+                    "on_until": "19:00",
                     "presence": PRESENCE,
                 },
             },
             {
                 # Nobody sleeps in here, so a plain window and no presence.
                 "name": "spare_shelf",
-                "source": "spare.outlets.grow_lamp_1",
                 "switch": SPARE_SWITCH,
                 "room": "spare",
                 "window": {"mode": "fixed", "from": "07:00", "to": "19:00"},
             },
         ],
-        "luxSensors": [
+        "lux_sensors": [
             {
                 "name": "study_shelf",
                 "entities": [LUX_1, LUX_2],
-                "sunLuxToPpfd": 0.0185,
+                "sun_lux_to_ppfd": 0.0185,
             }
         ],
         "plants": [
@@ -190,13 +188,12 @@ LIGHT_CONFIG: dict[str, Any] = {
                 "display": "Monstera",
                 "lights": ["study_shelf"],
                 "lux": "study_shelf",
-                "lightSource": "mixed",
                 "dli": {
                     "category": "foliage_tropical",
                     "preferred": {"low": 4.0, "high": 9.0},
                     "survival": {"low": 2.0, "high": 20.0},
-                    "preferredOverridden": False,
-                    "windowDays": 28,
+                    "preferred_overridden": False,
+                    "window_days": 28,
                     "budget": 5.0,
                 },
             },
@@ -205,13 +202,11 @@ LIGHT_CONFIG: dict[str, Any] = {
                 "name": "ficus_alii",
                 "display": "Ficus alii",
                 "lights": ["study_shelf"],
-                "lightSource": "grow",
             },
             {
                 "name": "spare_fern",
                 "display": "Spare fern",
                 "lights": ["spare_shelf"],
-                "lightSource": "grow",
             },
         ],
     }

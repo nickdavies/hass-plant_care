@@ -31,7 +31,6 @@ from .light import (
     FixedWindow,
     LightFixture,
     LightWindow,
-    Lit,
     LuxFixture,
     Weekday,
 )
@@ -53,7 +52,6 @@ FIELD_NAME = "name"
 FIELD_DISPLAY = "display"
 FIELD_SPECIES = "species"
 FIELD_MOISTURE = "moisture"
-FIELD_SOURCE = "source"
 FIELD_ENTITIES = "entities"
 FIELD_PROBE = "probe"
 FIELD_CALIBRATION = "calibration"
@@ -63,16 +61,16 @@ FIELD_ENTITY_MOISTURE = "moisture"
 FIELD_ENTITY_TEMPERATURE = "temperature"
 FIELD_ENTITY_BATTERY = "battery"
 
-FIELD_HEARTBEAT_MINUTES = "heartbeatMinutes"
-FIELD_DEADBAND_PP = "deadbandPp"
+FIELD_HEARTBEAT_MINUTES = "heartbeat_minutes"
+FIELD_DEADBAND_PP = "deadband_pp"
 
-FIELD_FIELD_CAPACITY = "fieldCapacity"
-FIELD_DRY_POINT = "dryPoint"
-FIELD_FC_TOLERANCE = "fcTolerance"
+FIELD_FIELD_CAPACITY = "field_capacity"
+FIELD_DRY_POINT = "dry_point"
+FIELD_FC_TOLERANCE = "fc_tolerance"
 
 FIELD_TASK = "task"
 FIELD_ICON = "icon"
-FIELD_EVERY_DAYS = "everyDays"
+FIELD_EVERY_DAYS = "every_days"
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -149,24 +147,23 @@ def _care_schema() -> vol.Schema:
 
 
 FIELD_LIGHTS = "lights"
-FIELD_LUX_SENSORS = "luxSensors"
+FIELD_LUX_SENSORS = "lux_sensors"
 FIELD_LUX = "lux"
 FIELD_DLI = "dli"
-FIELD_LIGHT_SOURCE = "lightSource"
 
 FIELD_SWITCH = "switch"
 FIELD_ROOM = "room"
-FIELD_LUX_TO_PPFD = "luxToPpfd"
-FIELD_SUN_LUX_TO_PPFD = "sunLuxToPpfd"
+FIELD_LUX_TO_PPFD = "lux_to_ppfd"
+FIELD_SUN_LUX_TO_PPFD = "sun_lux_to_ppfd"
 FIELD_WINDOW = "window"
 FIELD_MODE = "mode"
 FIELD_DAYS = "days"
 FIELD_FROM = "from"
 FIELD_TO = "to"
-FIELD_IF_AWAKE_FROM = "ifAwakeFrom"
-FIELD_NO_LATER_THAN = "noLaterThan"
-FIELD_NOT_BEFORE = "notBefore"
-FIELD_UNTIL = "until"
+FIELD_ON_IF_AWAKE_AFTER = "on_if_awake_after"
+FIELD_ON_AFTER = "on_after"
+FIELD_ON_EVEN_IF_ASLEEP_UNTIL = "on_even_if_asleep_until"
+FIELD_ON_UNTIL = "on_until"
 FIELD_PRESENCE = "presence"
 
 FIELD_CATEGORY = "category"
@@ -174,12 +171,12 @@ FIELD_PREFERRED = "preferred"
 FIELD_SURVIVAL = "survival"
 FIELD_LOW = "low"
 FIELD_HIGH = "high"
-FIELD_WINDOW_DAYS = "windowDays"
+FIELD_WINDOW_DAYS = "window_days"
 FIELD_BUDGET = "budget"
-FIELD_PREFERRED_OVERRIDDEN = "preferredOverridden"
+FIELD_PREFERRED_OVERRIDDEN = "preferred_overridden"
 
 MODE_FIXED = "fixed"
-MODE_AWAKE_AWARE = "awakeAware"
+MODE_AWAKE_AWARE = "awake_aware"
 
 
 def _time_of_day(value: Any) -> time:
@@ -218,10 +215,10 @@ def _window_schema() -> vol.Schema:
             vol.Optional(FIELD_DAYS): [_weekday],
             vol.Optional(FIELD_FROM): _time_of_day,
             vol.Optional(FIELD_TO): _time_of_day,
-            vol.Optional(FIELD_IF_AWAKE_FROM): _time_of_day,
-            vol.Optional(FIELD_NO_LATER_THAN): _time_of_day,
-            vol.Optional(FIELD_NOT_BEFORE): _time_of_day,
-            vol.Optional(FIELD_UNTIL): _time_of_day,
+            vol.Optional(FIELD_ON_IF_AWAKE_AFTER): _time_of_day,
+            vol.Optional(FIELD_ON_AFTER): _time_of_day,
+            vol.Optional(FIELD_ON_EVEN_IF_ASLEEP_UNTIL): _time_of_day,
+            vol.Optional(FIELD_ON_UNTIL): _time_of_day,
             vol.Optional(FIELD_PRESENCE): _entity_id,
         }
     )
@@ -231,7 +228,6 @@ def _light_schema() -> vol.Schema:
     return vol.Schema(
         {
             vol.Required(FIELD_NAME): str,
-            vol.Required(FIELD_SOURCE): str,
             vol.Required(FIELD_SWITCH): _entity_id,
             vol.Required(FIELD_ROOM): str,
             vol.Optional(FIELD_LUX_TO_PPFD): vol.Coerce(float),
@@ -274,7 +270,6 @@ def _plant_schema() -> vol.Schema:
             vol.Optional(FIELD_LIGHTS): [str],
             vol.Optional(FIELD_LUX): str,
             vol.Optional(FIELD_DLI): _dli_schema(),
-            vol.Optional(FIELD_LIGHT_SOURCE): vol.In([source.value for source in Lit]),
         }
     )
 
@@ -294,10 +289,10 @@ def parse_window(data: Mapping[str, Any], fixture: str) -> LightWindow:
         if data[FIELD_MODE] == MODE_FIXED:
             return FixedWindow(start=data[FIELD_FROM], end=data[FIELD_TO], days=day_set)
         return AwakeAwareWindow(
-            if_awake_from=data[FIELD_IF_AWAKE_FROM],
-            no_later_than=data[FIELD_NO_LATER_THAN],
-            not_before=data[FIELD_NOT_BEFORE],
-            until=data[FIELD_UNTIL],
+            on_if_awake_after=data[FIELD_ON_IF_AWAKE_AFTER],
+            on_after=data[FIELD_ON_AFTER],
+            on_even_if_asleep_until=data[FIELD_ON_EVEN_IF_ASLEEP_UNTIL],
+            on_until=data[FIELD_ON_UNTIL],
             presence_entity=data[FIELD_PRESENCE],
             days=day_set,
         )
@@ -434,9 +429,6 @@ def _parse_plant(data: Mapping[str, Any]) -> Plant:
         lights=tuple(data.get(FIELD_LIGHTS, [])),
         lux=data.get(FIELD_LUX),
         dli=parse_dli(data.get(FIELD_DLI), name),
-        light_source=(
-            Lit(source) if (source := data.get(FIELD_LIGHT_SOURCE)) else None
-        ),
     )
 
 
@@ -515,7 +507,7 @@ def parse(data: Mapping[str, Any]) -> PlantCareConfig:
                 if fixture.lux_to_ppfd is None:
                     raise InvalidPlantConfig(
                         f"plant '{plant.name}' is lit by both sun and lamp, but "
-                        f"fixture '{fixture.name}' declares no luxToPpfd, so its "
+                        f"fixture '{fixture.name}' declares no lux_to_ppfd, so its "
                         "contribution cannot be converted"
                     )
 

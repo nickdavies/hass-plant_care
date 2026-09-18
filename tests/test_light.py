@@ -29,10 +29,10 @@ PRESENCE = "sensor.person_presence_nick"
 SPARE = FixedWindow(start=time(7, 0), end=time(19, 0))
 
 STUDY = AwakeAwareWindow(
-    if_awake_from=time(6, 0),
-    no_later_than=time(9, 0),
-    not_before=time(17, 0),
-    until=time(19, 0),
+    on_if_awake_after=time(6, 0),
+    on_after=time(9, 0),
+    on_even_if_asleep_until=time(17, 0),
+    on_until=time(19, 0),
     presence_entity=PRESENCE,
 )
 
@@ -104,10 +104,10 @@ class TestAwakeAwareWindow:
 
     def test_a_day_off_expects_nothing(self) -> None:
         weekend = AwakeAwareWindow(
-            if_awake_from=time(6, 0),
-            no_later_than=time(9, 0),
-            not_before=time(17, 0),
-            until=time(19, 0),
+            on_if_awake_after=time(6, 0),
+            on_after=time(9, 0),
+            on_even_if_asleep_until=time(17, 0),
+            on_until=time(19, 0),
             presence_entity=PRESENCE,
             days=frozenset({Weekday.SAT}),
         )

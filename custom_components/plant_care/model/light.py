@@ -98,21 +98,21 @@ class AwakeAwareWindow:
 
     Four bounds, each answering a different failure:
 
-    - `if_awake_from`: come on early when they are already up, so the plant
+    - `on_if_awake_after`: come on early when they are already up, so the plant
       banks the extra light.
-    - `no_later_than`: come on anyway by here, so a lie-in never starves it.
-    - `not_before`: stay on until here whatever they do, so an early night does
-      not cut the photoperiod short.
-    - `until`: off by here regardless.
+    - `on_after`: come on anyway by here, so a lie-in never starves it.
+    - `on_even_if_asleep_until`: stay on until here whatever they do, so an
+      early night does not cut the photoperiod short.
+    - `on_until`: off by here regardless.
 
-    Between `not_before` and `until`, their sleep closes it. Before
-    `no_later_than`, their being awake opens it early.
+    Between `on_even_if_asleep_until` and `on_until`, their sleep closes it.
+    Before `on_after`, their being awake opens it early.
     """
 
-    if_awake_from: time
-    no_later_than: time
-    not_before: time
-    until: time
+    on_if_awake_after: time
+    on_after: time
+    on_even_if_asleep_until: time
+    on_until: time
     presence_entity: str
     days: frozenset[Weekday] | None = None
 
@@ -122,15 +122,15 @@ class AwakeAwareWindow:
     def is_on_at(self, moment: time, day: Weekday, *, asleep: bool) -> bool:
         if not self.runs_on(day):
             return False
-        if moment >= self.until or moment < self.if_awake_from:
+        if moment >= self.on_until or moment < self.on_if_awake_after:
             return False
 
         # The early window: only while they are up.
-        if moment < self.no_later_than:
+        if moment < self.on_after:
             return not asleep
 
         # The guaranteed middle: on regardless.
-        if moment < self.not_before:
+        if moment < self.on_even_if_asleep_until:
             return True
 
         # The tail: theirs to close by going to bed.
@@ -140,13 +140,13 @@ class AwakeAwareWindow:
         """The stretch no amount of sleeping can close."""
         if not self.runs_on(day):
             return 0
-        return _overlap(self.no_later_than, self.not_before, since, until)
+        return _overlap(self.on_after, self.on_even_if_asleep_until, since, until)
 
     def possible_minutes(self, since: time, until: time, day: Weekday) -> int:
         """The widest the window can ever open, if they are up for all of it."""
         if not self.runs_on(day):
             return 0
-        return _overlap(self.if_awake_from, self.until, since, until)
+        return _overlap(self.on_if_awake_after, self.on_until, since, until)
 
 
 LightWindow = FixedWindow | AwakeAwareWindow
