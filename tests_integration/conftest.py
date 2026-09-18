@@ -34,7 +34,6 @@ TEST_CONFIG: dict[str, Any] = {
                 "display": "Passionfruit",
                 "species": "passiflora edulis",
                 "moisture": {
-                    "source": "roam.sensors.moisture_1",
                     "entities": {
                         "moisture": "sensor.roam_sensor_moisture_1_soil_moisture",
                         "temperature": "sensor.roam_sensor_moisture_1_temperature",
@@ -61,7 +60,6 @@ TEST_CONFIG: dict[str, Any] = {
                 "name": "monstera",
                 "display": "Monstera",
                 "moisture": {
-                    "source": "nick_study.sensors.monstera_window",
                     "entities": {
                         "moisture": "sensor.nick_study_sensor_monstera_window_soil_moisture"
                     },

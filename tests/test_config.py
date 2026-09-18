@@ -35,7 +35,6 @@ CALIBRATED_PLANT: dict[str, Any] = {
     "display": "Passionfruit",
     "species": "passiflora edulis",
     "moisture": {
-        "source": "roam.sensors.moisture_1",
         "entities": {
             "moisture": "sensor.roam_sensor_moisture_1_soil_moisture",
             "temperature": "sensor.roam_sensor_moisture_1_temperature",
@@ -53,7 +52,6 @@ CALIBRATING_PLANT: dict[str, Any] = {
     "name": "monstera",
     "display": "Monstera",
     "moisture": {
-        "source": "nick_study.sensors.monstera_window",
         "entities": {
             "moisture": "sensor.nick_study_sensor_monstera_window_soil_moisture"
         },
@@ -156,6 +154,25 @@ class TestStrictness:
         starting."""
         with pytest.raises(vol.Invalid):
             load({**CALIBRATED_PLANT, "lightLevel": "bright"})
+
+    def test_a_device_reference_is_rejected(self) -> None:
+        """The document carries entity ids and nothing else that points
+        outward.
+
+        A `{room, name}` path into the generator's zigbee inventory would be an
+        identifier this component has no way to resolve, and would be useless to
+        any other consumer of the same document. It used to be here; the schema
+        now refuses it so it cannot come back by accident.
+        """
+        plant_data = {
+            **CALIBRATING_PLANT,
+            "moisture": {
+                **CALIBRATING_PLANT["moisture"],
+                "source": "nick_study.sensors.monstera_window",
+            },
+        }
+        with pytest.raises(vol.Invalid):
+            load(plant_data)
 
     def test_a_bare_entity_name_is_rejected(self) -> None:
         plant_data = {

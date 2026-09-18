@@ -133,9 +133,15 @@ Calibration = Calibrated | Calibrating
 
 @dataclass(frozen=True)
 class Moisture:
-    """A plant's soil probe, already resolved to entity ids."""
+    """A plant's soil probe, already resolved to entity ids.
 
-    source: str
+    There is no reference back to the device it came from. The generator names
+    devices by a `{room, name}` path into an inventory this component cannot
+    see, so carrying one here would be an identifier nothing on this side could
+    resolve — and the entity ids already encode the room, the device type and
+    the name.
+    """
+
     moisture_entity: SourceEntity
     temperature_entity: SourceEntity | None
     battery_entity: SourceEntity | None

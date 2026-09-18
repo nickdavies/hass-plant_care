@@ -129,7 +129,6 @@ def _calibration_schema() -> vol.Schema:
 def _moisture_schema() -> vol.Schema:
     return vol.Schema(
         {
-            vol.Required(FIELD_SOURCE): str,
             vol.Required(FIELD_ENTITIES): _entities_schema(),
             vol.Required(FIELD_PROBE): _probe_schema(),
             # Absent means calibrating. See `parse_calibration`.
@@ -400,7 +399,6 @@ def _parse_moisture(data: Mapping[str, Any], plant_name: str) -> Moisture:
         raise InvalidPlantConfig(f"plant '{plant_name}': {err}") from err
 
     return Moisture(
-        source=data[FIELD_SOURCE],
         moisture_entity=SourceEntity(entities[FIELD_ENTITY_MOISTURE]),
         temperature_entity=SourceEntity(temperature) if temperature else None,
         battery_entity=SourceEntity(battery) if battery else None,
