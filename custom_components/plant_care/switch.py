@@ -73,10 +73,7 @@ class LightKillswitch(FixtureEntity, SwitchEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {
-            "room": self._fixture.room,
-            "switch": self._fixture.switch_entity,
-        }
+        return {"switch": self._fixture.switch_entity}
 
     async def async_turn_on(self, **kwargs: Any) -> None:
         await self._controller.async_set_killed(True)

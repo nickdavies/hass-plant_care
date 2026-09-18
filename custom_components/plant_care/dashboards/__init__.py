@@ -161,7 +161,7 @@ class PlantsDashboard(GeneratedDashboard):
                 ICON: "mdi:hand-back-left",
             },
         ]
-        title = f"{fixture.name.replace('_', ' ').title()} — {fixture.room}"
+        title = f"{fixture.name.replace('_', ' ').title()} lamp"
         return EntitiesCard(title=title, entities=rows)
 
     def _plant_card(self, plant: Plant) -> Renderable:

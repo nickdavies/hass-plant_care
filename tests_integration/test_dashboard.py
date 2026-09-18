@@ -95,8 +95,7 @@ class TestContent:
         """A card pointing at an id nothing creates renders as a blank row.
 
         Allowed: entities this component creates, and the probe entities the
-        config named — which the generator already resolved against the device
-        inventory.
+        config named.
         """
         config = (
             await integration.data["lovelace"].dashboards["plants"].async_load(False)
@@ -118,15 +117,15 @@ class TestContent:
 
 
 class TestLightContent:
-    async def test_each_fixture_gets_a_card_naming_its_room(
+    async def test_each_fixture_gets_a_card(
         self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
     ) -> None:
         await start(hass, freezer, at(12, 0))
         config = await hass.data["lovelace"].dashboards["plants"].async_load(False)
         rendered = str(config)
 
-        assert "Study Shelf — nick_study" in rendered
-        assert "Spare Shelf — spare" in rendered
+        assert "Study Shelf lamp" in rendered
+        assert "Spare Shelf lamp" in rendered
 
     async def test_the_killswitch_sits_next_to_the_on_time_it_affects(
         self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
@@ -161,7 +160,7 @@ class TestLightContent:
         self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
     ) -> None:
         """Including the lamp switches, which come from zigbee2mqtt rather than
-        from here — the ids the generator resolved."""
+        from here."""
         await start(hass, freezer, at(12, 0))
         config = await hass.data["lovelace"].dashboards["plants"].async_load(False)
 

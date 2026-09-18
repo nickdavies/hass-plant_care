@@ -6,9 +6,9 @@ logbook and anything else can trigger on it.
 
 There is deliberately no watering button on a calibrated plant: a moisture probe
 sees a watering by anyone, with no phone nearby and no discipline required, so a
-button there would be a worse second source of truth. The generator enforces
-that by refusing to schedule a detectable task, so by the time a task reaches
-here it is one nothing can detect.
+button there would be a worse second source of truth. Parsing enforces that by
+refusing to schedule a detectable task, so by the time a task reaches here it
+is one nothing can detect.
 """
 
 from __future__ import annotations

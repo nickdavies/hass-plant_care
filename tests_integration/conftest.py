@@ -23,71 +23,62 @@ from pytest_homeassistant_custom_component.common import async_fire_time_changed
 
 DOMAIN = "plant_care"
 
-# Shaped exactly like the generator's output. Kept verbatim rather than
-# minimised, because the contract being tested is with that document — a
-# simplified fixture would stop catching a divergence between the two.
+# Shaped exactly like the real config in hass-configs. Kept close to it rather
+# than minimised, because the contract being tested is with that file.
 TEST_CONFIG: dict[str, Any] = {
     DOMAIN: {
+        "probe_models": {
+            "thirdreality_soil_gen2": {"heartbeat_minutes": 10, "deadband_pp": 1.0}
+        },
+        "care_tasks": {
+            "water": {
+                "display": "Water",
+                "icon": "mdi:watering-can",
+                "detected_by": "calibrated_moisture",
+            },
+            "feed": {"display": "Feed", "icon": "mdi:nutrition"},
+            "pest_check": {"display": "Pest check", "icon": "mdi:bug-outline"},
+        },
         "plants": [
             {
                 "name": "passionfruit",
                 "display": "Passionfruit",
                 "species": "passiflora edulis",
                 "moisture": {
+                    "model": "thirdreality_soil_gen2",
                     "entities": {
                         "moisture": "sensor.roam_sensor_moisture_1_soil_moisture",
                         "temperature": "sensor.roam_sensor_moisture_1_temperature",
                         "battery": "sensor.roam_sensor_moisture_1_battery",
                     },
-                    "probe": {"heartbeat_minutes": 10, "deadband_pp": 1.0},
                     "calibration": {
                         "field_capacity": 79.54,
                         "dry_point": 53.18,
                         "fc_tolerance": 8.0,
                     },
                 },
-                "care": [
-                    {
-                        "task": "feed",
-                        "display": "Feed",
-                        "icon": "mdi:nutrition",
-                        "every_days": 14,
-                    }
-                ],
+                "care": [{"task": "feed", "every_days": 14}],
             },
             {
                 # Calibrating: monitored, but no threshold exists.
                 "name": "monstera",
                 "display": "Monstera",
                 "moisture": {
+                    "model": "thirdreality_soil_gen2",
                     "entities": {
                         "moisture": "sensor.nick_study_sensor_monstera_window_soil_moisture"
                     },
-                    "probe": {"heartbeat_minutes": 10, "deadband_pp": 1.0},
+                    "calibration": "calibrating",
                 },
-                "care": [
-                    {
-                        "task": "pest_check",
-                        "display": "Pest check",
-                        "icon": "mdi:bug-outline",
-                        "every_days": 7,
-                    }
-                ],
+                "care": [{"task": "pest_check", "every_days": 7}],
             },
             {
                 # No sensors at all — an outdoor pot. A first-class case.
                 "name": "front_step_pot",
                 "display": "Front step pot",
-                "care": [
-                    {
-                        "task": "water",
-                        "display": "Water",
-                        "icon": "mdi:watering-can",
-                        "every_days": 4,
-                    }
-                ],
+                "care": [{"task": "water", "every_days": 4}],
             },
-        ]
+        ],
     }
 }
 
@@ -109,7 +100,7 @@ POT_WATER_DONE = "button.plant_front_step_pot_water_done"
 OUTSTANDING = "sensor.plant_outstanding"
 
 # Probe entities the component reads but never creates. In reality these come
-# from zigbee2mqtt via MQTT discovery; the generator resolved their ids.
+# from zigbee2mqtt via MQTT discovery.
 PASSIONFRUIT_RAW = "sensor.roam_sensor_moisture_1_soil_moisture"
 PASSIONFRUIT_BATTERY = "sensor.roam_sensor_moisture_1_battery"
 MONSTERA_RAW = "sensor.nick_study_sensor_monstera_window_soil_moisture"
@@ -151,27 +142,27 @@ MONSTERA_DLI = "sensor.plant_monstera_dli_today"
 
 LIGHT_CONFIG: dict[str, Any] = {
     DOMAIN: {
+        "dli_categories": {"foliage_tropical": {"low": 4.0, "high": 9.0}},
         "lights": [
             {
                 "name": "study_shelf",
                 "switch": STUDY_SWITCH,
-                "room": "nick_study",
                 "lux_to_ppfd": 0.0125,
                 "window": {
-                    "mode": "awake_aware",
-                    "on_if_awake_after": "06:00",
-                    "on_after": "09:00",
-                    "on_even_if_asleep_until": "17:00",
-                    "on_until": "19:00",
-                    "presence": PRESENCE,
+                    "awake_aware": {
+                        "presence": PRESENCE,
+                        "on_if_awake_after": "06:00",
+                        "on_after": "09:00",
+                        "on_even_if_asleep_until": "17:00",
+                        "on_until": "19:00",
+                    }
                 },
             },
             {
                 # Nobody sleeps in here, so a plain window and no presence.
                 "name": "spare_shelf",
                 "switch": SPARE_SWITCH,
-                "room": "spare",
-                "window": {"mode": "fixed", "from": "07:00", "to": "19:00"},
+                "window": {"fixed": {"from": "07:00", "to": "19:00"}},
             },
         ],
         "lux_sensors": [
@@ -190,9 +181,7 @@ LIGHT_CONFIG: dict[str, Any] = {
                 "lux": "study_shelf",
                 "dli": {
                     "category": "foliage_tropical",
-                    "preferred": {"low": 4.0, "high": 9.0},
                     "survival": {"low": 2.0, "high": 20.0},
-                    "preferred_overridden": False,
                     "window_days": 28,
                     "budget": 5.0,
                 },

@@ -115,6 +115,62 @@ class TestAwakeAwareWindow:
         assert weekend.possible_minutes(time(0, 0), time(23, 59), Weekday.MON) == 0
 
 
+class TestWindowInvariants:
+    """Ordering is a property of the window, not something a later pass
+    checks, so a window that does not run forward cannot be constructed."""
+
+    def test_a_fixed_window_must_run_forward(self) -> None:
+        with pytest.raises(ValueError, match="forward"):
+            FixedWindow(start=time(19, 0), end=time(7, 0))
+
+    def test_a_fixed_window_may_not_be_empty(self) -> None:
+        """Opening and closing at the same moment is a midnight-crossing window
+        written the only way this format can express it."""
+        with pytest.raises(ValueError, match="midnight"):
+            FixedWindow(start=time(7, 0), end=time(7, 0))
+
+    def test_awake_aware_bounds_must_be_ordered(self) -> None:
+        with pytest.raises(ValueError, match="on_if_awake_after .* after on_after"):
+            AwakeAwareWindow(
+                on_if_awake_after=time(6, 0),
+                on_after=time(5, 0),
+                on_even_if_asleep_until=time(17, 0),
+                on_until=time(19, 0),
+                presence_entity=PRESENCE,
+            )
+        with pytest.raises(
+            ValueError, match="on_even_if_asleep_until .* after on_until"
+        ):
+            AwakeAwareWindow(
+                on_if_awake_after=time(6, 0),
+                on_after=time(9, 0),
+                on_even_if_asleep_until=time(20, 0),
+                on_until=time(19, 0),
+                presence_entity=PRESENCE,
+            )
+
+    def test_equal_bounds_are_allowed_between_regions(self) -> None:
+        """A region may be empty — a fixture with no early stretch is fine."""
+        window = AwakeAwareWindow(
+            on_if_awake_after=time(9, 0),
+            on_after=time(9, 0),
+            on_even_if_asleep_until=time(17, 0),
+            on_until=time(17, 0),
+            presence_entity=PRESENCE,
+        )
+        assert window.is_on_at(time(12, 0), Weekday.MON, asleep=True)
+
+    def test_an_awake_aware_window_may_not_cross_midnight(self) -> None:
+        with pytest.raises(ValueError, match="midnight"):
+            AwakeAwareWindow(
+                on_if_awake_after=time(6, 0),
+                on_after=time(6, 0),
+                on_even_if_asleep_until=time(6, 0),
+                on_until=time(6, 0),
+                presence_entity=PRESENCE,
+            )
+
+
 class TestPresence:
     """`sensor.group_presence_*` serialises a comma-joined set."""
 
@@ -207,19 +263,13 @@ class TestLuxAveraging:
 
 class TestFixtureShape:
     def test_presence_comes_from_the_window_not_the_fixture(self) -> None:
-        """So the presence signal, the room and the hardware cannot drift apart:
-        there is one place it is stated."""
+        """So a fixture cannot claim sleep-sensitivity without naming whose
+        sleep, and a fixed window has nowhere to put a presence entity."""
         awake_aware = LightFixture(
-            name="study_shelf",
-            switch_entity="switch.study_lamp",
-            room="nick_study",
-            window=STUDY,
+            name="study_shelf", switch_entity="switch.study_lamp", window=STUDY
         )
         fixed = LightFixture(
-            name="spare_shelf",
-            switch_entity="switch.spare_lamp",
-            room="spare",
-            window=SPARE,
+            name="spare_shelf", switch_entity="switch.spare_lamp", window=SPARE
         )
         assert awake_aware.presence_entity == PRESENCE
         assert awake_aware.is_sleep_sensitive
