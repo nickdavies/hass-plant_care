@@ -12,12 +12,18 @@ could not do was be tested.
 from __future__ import annotations
 
 import statistics
+from collections.abc import Iterable
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 
+from .budget import Interval, TimeBudget
 from .health import HealthIssue, IssueKind
 from .plant import Calibrated, Calibration, ProbeFacts
 from .policy import Policy
+
+SILENCE = "silence"
+WET = "wet"
+"""Names of the two persisted budgets, as the store keys them."""
 
 
 @dataclass(frozen=True)
@@ -116,16 +122,31 @@ class MoistureMonitor:
     # these is about *duration*, and a rolling window one hour long cannot say
     # how long something has been true for twelve.
     _last_change: Reading | None = field(init=False, default=None)
-    _above_fc_since: datetime | None = field(init=False, default=None)
     _settle_due: datetime | None = field(init=False, default=None)
     _shortfall: float | None = field(init=False, default=None)
     _started_at: datetime | None = field(init=False, default=None)
+
+    # The two burn-rate budgets. Silence is learned about after the fact, when
+    # the probe speaks again; wetness is known at every reading. `_wet` only
+    # exists once calibrated, because "above field capacity" needs one.
+    _silence: TimeBudget = field(init=False)
+    _wet: TimeBudget | None = field(init=False, default=None)
+    _dirty: bool = field(init=False, default=False)
 
     def __post_init__(self) -> None:
         self._window = RollingWindow(
             window=timedelta(hours=self.policy.median_window_hours(self.probe)),
             max_samples=self.policy.median_sampling_size(self.probe),
         )
+        self._silence = TimeBudget(
+            window=self.policy.availability_window(),
+            allowance=self.policy.availability_allowance(),
+        )
+        if isinstance(self.calibration, Calibrated):
+            self._wet = TimeBudget(
+                window=self.policy.waterlogged_window(),
+                allowance=self.policy.waterlogged_allowance(self.calibration),
+            )
 
     # ---- Restoring across a restart ------------------------------------
 
@@ -134,8 +155,10 @@ class MoistureMonitor:
         needs_water: bool,
         last_watered: datetime | None,
         now: datetime | None = None,
+        silence: Iterable[Interval] = (),
+        wet: Iterable[Interval] = (),
     ) -> None:
-        """Re-adopt the latch after a restart.
+        """Re-adopt the latch and the budgets after a restart.
 
         The rolling window is deliberately **not** restored: it would be stale,
         and refilling it takes one window. `_below_since` is not restored
@@ -149,9 +172,17 @@ class MoistureMonitor:
         during that hour does not quietly skip the shortfall check — which would
         be the one time it matters most, since a redeploy right after watering
         is exactly when you are stood over the pot.
+
+        The budgets' closed stretches are restored, because the slow burn
+        exists to see across days and Home Assistant restarts more often than
+        that. A stretch still open at shutdown is lost; time Home Assistant
+        itself was down is never counted against the probe.
         """
         self._needs_water = needs_water
         self._last_watered = last_watered
+        self._silence.restore(silence)
+        if self._wet is not None:
+            self._wet.restore(wet)
         # Silence is measured from here until the first reading arrives. On a
         # cold start MQTT discovery has not created the probe entities yet, so
         # without this every plant would report a silent probe for the first few
@@ -175,6 +206,15 @@ class MoistureMonitor:
         previous = self._last
         self._window.add(Reading(when, value))
         self._last = Reading(when, value)
+
+        # A gap longer than one heartbeat is silence, known only now that the
+        # probe has spoken again. The first heartbeat interval is not missed
+        # until it has passed, so only the excess counts.
+        if previous is not None:
+            expected = previous.when + timedelta(minutes=self.probe.heartbeat_minutes)
+            if when > expected:
+                self._silence.add(Interval(expected, when))
+                self._dirty = True
 
         # "The value has not moved" needs the last time it actually moved, which
         # is not the last time it was reported — a wedged probe heartbeats
@@ -226,14 +266,13 @@ class MoistureMonitor:
         self._settle_due = None
 
     def _track_waterlogging(self, when: datetime) -> None:
-        if not isinstance(self.calibration, Calibrated):
+        if self._wet is None or not isinstance(self.calibration, Calibrated):
             return
 
         smoothed = self._window.median()
-        if smoothed is None or smoothed <= self.calibration.field_capacity:
-            self._above_fc_since = None
-        elif self._above_fc_since is None:
-            self._above_fc_since = when
+        wet = smoothed is not None and smoothed > self.calibration.field_capacity
+        if self._wet.mark(when, bad=wet):
+            self._dirty = True
 
     def _detect_watering(self, value: float) -> bool:
         if not isinstance(self.calibration, Calibrated):
@@ -302,11 +341,24 @@ class MoistureMonitor:
     def has_data(self) -> bool:
         return len(self._window) > 0
 
+    def intervals(self) -> dict[str, list[Interval]]:
+        """The budgets' closed stretches, keyed for the store."""
+        out = {SILENCE: self._silence.closed()}
+        if self._wet is not None:
+            out[WET] = self._wet.closed()
+        return out
+
+    def take_dirty(self) -> bool:
+        """Whether a budget has closed a stretch since this was last asked —
+        the moment there is something new worth persisting."""
+        dirty, self._dirty = self._dirty, False
+        return dirty
+
     def health(self, now: datetime) -> list[HealthIssue]:
         """Faults that would otherwise read as healthy soil.
 
         Evaluated against an injected `now` rather than the clock, so every
-        duration here — twelve hours stuck, twenty-four waterlogged — is
+        duration here — hours silent, days of dropouts, a week wet — is
         testable without waiting.
 
         Battery is not here: it belongs to a different entity, and this type
@@ -332,17 +384,46 @@ class MoistureMonitor:
                     kind=IssueKind.PROBE_SILENT,
                     label="Probe not reporting",
                     detail=(
-                        "Nothing can tell whether this plant needs water until the "
-                        "probe is back. Check the battery and that zigbee2mqtt still "
-                        "sees it."
+                        f"Silent for {hours:g} hours. Nothing can tell whether this "
+                        "plant needs water until the probe is back. Check the battery "
+                        "and that zigbee2mqtt still sees it."
                     ),
                     value=hours,
                 )
             )
             # Everything below infers from readings, and there are none worth
-            # trusting. Reporting a stuck probe on top of a silent one would be
-            # two alerts for one fault.
+            # trusting. Reporting a stuck or flaky probe on top of a silent one
+            # would be two alerts for one fault.
             return issues
+
+        # The slow burn: not down now, but down often. The stretch since the
+        # last report is still open and counts too, past its heartbeat.
+        open_since = None
+        if self._last is not None:
+            open_since = self._last.when + timedelta(
+                minutes=self.probe.heartbeat_minutes
+            )
+        window = self.policy.availability_window()
+        rate = self._silence.burn_rate(now, window, open_since)
+        if rate >= self.policy.availability_slow_burn_rate:
+            down = self._silence.accrued(now, window, open_since)
+            issues.append(
+                HealthIssue(
+                    kind=IssueKind.PROBE_FLAKY,
+                    label="Probe is flaky",
+                    detail=(
+                        f"Silent for {down.total_seconds() / 60:.0f} minutes in total "
+                        f"over the last {self.policy.availability_window_days} days, "
+                        f"against an allowance of "
+                        f"{self._silence.allowance.total_seconds() / 60:.0f} "
+                        f"({self.policy.availability_slo_pct:g}% availability). Every "
+                        "dropout healed on its own, which is why nothing else "
+                        "reported it. A dying battery, a pot at the edge of range, or "
+                        "a link that wants a repeater."
+                    ),
+                    value=round(rate, 2),
+                )
+            )
 
         if self._last_change is not None:
             unchanged = now - self._last_change.when
@@ -360,20 +441,9 @@ class MoistureMonitor:
                     )
                 )
 
-        if self._above_fc_since is not None:
-            wet_for = now - self._above_fc_since
-            if wet_for >= timedelta(hours=self.policy.waterlogged_hours):
-                issues.append(
-                    HealthIssue(
-                        kind=IssueKind.WATERLOGGED,
-                        label="Not draining",
-                        detail=(
-                            "Soil has sat above field capacity. Check the pot is not "
-                            "standing in its own runoff and the drainage holes are clear."
-                        ),
-                        value=round(wet_for.total_seconds() / 3600, 1),
-                    )
-                )
+        waterlogged = self._waterlogged(now)
+        if waterlogged is not None:
+            issues.append(waterlogged)
 
         if self._shortfall is not None and isinstance(self.calibration, Calibrated):
             target = self.policy.fc_shortfall_target(self.calibration)
@@ -392,3 +462,47 @@ class MoistureMonitor:
             )
 
         return issues
+
+    def _waterlogged(self, now: datetime) -> HealthIssue | None:
+        """Time above field capacity, at two speeds.
+
+        Fast: wet for the whole of the last day — the pot is not draining now.
+        Slow: wet for more of the week than this plant tolerates, even if never
+        a whole day at a stretch — the pot is being overwatered.
+        """
+        if self._wet is None or not isinstance(self.calibration, Calibrated):
+            return None
+
+        budget_pct = self.policy.waterlogged_budget_pct(self.calibration)
+        fast_over = timedelta(days=self.policy.waterlogged_fast_days)
+        fast_rate = self._wet.burn_rate(now, fast_over)
+        if fast_rate >= self.policy.waterlogged_fast_burn_rate:
+            hours = self._wet.accrued(now, fast_over).total_seconds() / 3600
+            return HealthIssue(
+                kind=IssueKind.WATERLOGGED,
+                label="Not draining",
+                detail=(
+                    f"Above field capacity for {hours:.0f} of the last "
+                    f"{fast_over.total_seconds() / 3600:.0f} hours. Check the pot is "
+                    "not standing in its own runoff and the drainage holes are clear."
+                ),
+                value=round(fast_rate, 2),
+            )
+
+        window = self.policy.waterlogged_window()
+        slow_rate = self._wet.burn_rate(now, window)
+        if slow_rate >= self.policy.waterlogged_slow_burn_rate:
+            wet_pct = self._wet.accrued(now, window) / window * 100
+            return HealthIssue(
+                kind=IssueKind.WATERLOGGED,
+                label="Overwatered",
+                detail=(
+                    f"Above field capacity {wet_pct:.0f}% of the last "
+                    f"{self.policy.waterlogged_window_days} days, against a budget "
+                    f"of {budget_pct:g}%. It drains, but it never dries out: water "
+                    "less often, or less each time."
+                ),
+                value=round(slow_rate, 2),
+            )
+
+        return None

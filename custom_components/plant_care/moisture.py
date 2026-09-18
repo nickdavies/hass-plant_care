@@ -29,8 +29,9 @@ from homeassistant.helpers.event import (
 from homeassistant.util import dt as dt_util
 
 from .model import Moisture, Plant, Policy
+from .model.budget import Interval
 from .model.health import HealthIssue, IssueKind
-from .model.signals import MoistureMonitor, MoistureSignals
+from .model.signals import SILENCE, WET, MoistureMonitor, MoistureSignals
 from .store import EventLog
 
 _LOGGER = logging.getLogger(__name__)
@@ -135,6 +136,8 @@ class MoistureCoordinator:
             needs_water=self._event_log.needs_water(self._plant.name),
             last_watered=self._event_log.last_watered(self._plant.name),
             now=dt_util.utcnow(),
+            silence=self._restored_intervals(SILENCE),
+            wet=self._restored_intervals(WET),
         )
 
         entity_id = self._moisture.moisture_entity.entity_id
@@ -203,8 +206,24 @@ class MoistureCoordinator:
                     self._plant.name, self.monitor.needs_water
                 )
             )
+        if self.monitor.take_dirty():
+            self._hass.async_create_task(self._async_record_intervals())
 
         self._notify()
+
+    def _restored_intervals(self, budget: str) -> list[Interval]:
+        return [
+            Interval(start, end)
+            for start, end in self._event_log.intervals(self._plant.name, budget)
+        ]
+
+    async def _async_record_intervals(self) -> None:
+        for budget, intervals in self.monitor.intervals().items():
+            await self._event_log.async_record_intervals(
+                self._plant.name,
+                budget,
+                [(interval.start, interval.end) for interval in intervals],
+            )
 
     def _ingest(self, raw: str, when) -> bool:
         if raw in NON_VALUES:

@@ -62,6 +62,11 @@ def event_key(plant: str, kind: EventKind, name: str) -> str:
 SECTION_EVENTS = "events"
 SECTION_FLAGS = "flags"
 SECTION_DLI = "dli"
+SECTION_INTERVALS = "intervals"
+"""Closed stretches of a bad state, per plant per budget — the week of probe
+dropouts or wet soil that a burn rate is computed over. Persisted because the
+slow burn exists to see across days, and Home Assistant restarts more often
+than that."""
 
 FLAG_NEEDS_WATER = "needs_water"
 
@@ -91,6 +96,7 @@ class EventLog:
         self._events: dict[str, datetime] = {}
         self._flags: dict[str, bool] = {}
         self._dli: dict[str, dict[date, float]] = {}
+        self._intervals: dict[str, list[tuple[datetime, datetime]]] = {}
 
     async def async_load(self) -> None:
         raw: Mapping[str, Any] | None = await self._store.async_load()
@@ -125,6 +131,22 @@ class EventLog:
                         value,
                     )
 
+        for key, pairs in raw.get(SECTION_INTERVALS, {}).items():
+            restored: list[tuple[datetime, datetime]] = []
+            for pair in pairs:
+                try:
+                    start, end = pair
+                    restored.append(
+                        (datetime.fromisoformat(start), datetime.fromisoformat(end))
+                    )
+                except (TypeError, ValueError):
+                    _LOGGER.warning(
+                        "plant_care: discarding unreadable interval for %s: %r",
+                        key,
+                        pair,
+                    )
+            self._intervals[key] = restored
+
     async def _async_save(self) -> None:
         await self._store.async_save(
             {
@@ -135,6 +157,10 @@ class EventLog:
                 SECTION_DLI: {
                     plant: {day.isoformat(): value for day, value in days.items()}
                     for plant, days in self._dli.items()
+                },
+                SECTION_INTERVALS: {
+                    key: [[start.isoformat(), end.isoformat()] for start, end in pairs]
+                    for key, pairs in self._intervals.items()
                 },
             }
         )
@@ -236,3 +262,16 @@ class EventLog:
 
     def dli_history(self, plant: str) -> dict[date, float]:
         return dict(self._dli.get(plant, {}))
+
+    # ---- Budget intervals ----------------------------------------------
+
+    async def async_record_intervals(
+        self, plant: str, budget: str, pairs: list[tuple[datetime, datetime]]
+    ) -> None:
+        """Replace one budget's closed stretches. The caller already keeps the
+        list trimmed to its window, so this is a write, not a merge."""
+        self._intervals[f"{plant}.{budget}"] = list(pairs)
+        await self._async_save()
+
+    def intervals(self, plant: str, budget: str) -> list[tuple[datetime, datetime]]:
+        return list(self._intervals.get(f"{plant}.{budget}", []))

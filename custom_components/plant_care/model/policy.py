@@ -1,9 +1,8 @@
 """The decisions — as opposed to the facts in `plant.py`.
 
-These constants moved here from the generator, which had no business holding
-them: how much of a pot's available water counts as "needs water" is a judgement
-about plant care, not a fact about a zigbee device, and the generator exports
-only facts.
+How much of a pot's available water counts as "needs water" is a judgement
+about plant care, not a fact about a probe, so it lives here rather than in the
+config: the config carries what was measured, this carries what to make of it.
 
 Gathered into a frozen dataclass with defaults rather than left as module
 constants so a test can vary one without monkeypatching, and so per-plant
@@ -13,6 +12,7 @@ overrides have somewhere to go later without a signature change everywhere.
 from __future__ import annotations
 
 from dataclasses import dataclass
+from datetime import timedelta
 
 from .plant import Calibrated, ProbeFacts
 
@@ -64,8 +64,17 @@ class Policy:
     """
 
     stale_heartbeats: int = 12
-    """Missed reports before a probe is treated as not reporting. Generous
-    enough to ride out a zigbee2mqtt restart or a Flux redeploy."""
+    """Missed reports before a probe is treated as not reporting, for a probe
+    slow enough that this exceeds the floor below."""
+
+    silent_floor_hours: int = 6
+    """The shortest silence ever reported as a fault, whatever the heartbeat.
+
+    A two-hour threshold was tried and produced alerts that had healed by the
+    time anyone looked — a zigbee2mqtt restart, a Flux redeploy, a marginal
+    link having a bad afternoon. Those episodes are what the availability
+    budget below is for; this is for a probe that is actually down.
+    """
 
     # ---- Health checks -------------------------------------------------
 
@@ -80,9 +89,43 @@ class Policy:
     wedged — none of which look like anything from a threshold's point of view.
     """
 
-    waterlogged_hours: int = 24
-    """Sitting above field capacity this long. The pot is not draining, or it is
-    standing in its own runoff."""
+    availability_window_days: int = 7
+    availability_slo_pct: float = 99.0
+    """The probe reports for at least this share of the window.
+
+    99% of a week is about 100 minutes of silence. A single two-hour dropout is
+    over budget on its own and is caught by the floor above; what this catches
+    is the probe that is *never* down long enough to trip the floor and is down
+    a little every day — a dying battery, a pot at the edge of range. Every
+    episode self-heals, so an edge-triggered check cannot express "flaky" at
+    all.
+    """
+
+    availability_slow_burn_rate: float = 2.0
+    """Twice the allowance's pace over the whole window — about 200 minutes of
+    a 99% week. A single two-hour dropout is inside it (a two-hour dropout is
+    already 1.2% of a week, so 1.0× would page on the very transient this
+    exists to ignore); two in a week, or half an hour every day, are not.
+    There is no faster page: a current outage long enough to matter is the
+    silent check."""
+
+    waterlogged_window_days: int = 7
+    default_waterlogged_budget_pct: float = 40.0
+    """Share of the window a pot may sit above field capacity.
+
+    A day continuously above it was the old check. A pot above it 40% of the
+    time is being overwatered even if it never sits there a full day, and the
+    budget form sees that. Per-plant because the risk varies: passionfruit
+    will not tolerate wet feet, a succulent even less, something marshy is fine.
+    """
+
+    waterlogged_fast_days: int = 1
+    waterlogged_fast_burn_rate: float = 2.5
+    """Spending the allowance at 2.5× pace over one day is, with a 40% budget,
+    a pot that has been wet for the whole of the last day — the old check,
+    kept as the fast page."""
+
+    waterlogged_slow_burn_rate: float = 1.0
 
     shortfall_settle_minutes: int = 60
     """How long after a watering to judge whether it worked.
@@ -109,7 +152,21 @@ class Policy:
         return (60 // probe.heartbeat_minutes) * 5
 
     def stale_hours(self, probe: ProbeFacts) -> int:
-        return max(1, _ceil_div(probe.heartbeat_minutes * self.stale_heartbeats, 60))
+        """The floor, or twelve heartbeats — whichever is longer."""
+        return max(
+            self.silent_floor_hours,
+            _ceil_div(probe.heartbeat_minutes * self.stale_heartbeats, 60),
+        )
+
+    def availability_window(self) -> timedelta:
+        return timedelta(days=self.availability_window_days)
+
+    def availability_allowance(self) -> timedelta:
+        """Silence the window may contain and still meet the SLO."""
+        return self.availability_window() * (1.0 - self.availability_slo_pct / 100.0)
+
+    def waterlogged_window(self) -> timedelta:
+        return timedelta(days=self.waterlogged_window_days)
 
     # ---- Derived from a calibration -----------------------------------
 
@@ -126,6 +183,17 @@ class Policy:
         if calibration.fc_tolerance is None:
             return self.default_fc_tolerance
         return calibration.fc_tolerance
+
+    def waterlogged_budget_pct(self, calibration: Calibrated) -> float:
+        """The configured share, or the default when none was chosen."""
+        if calibration.waterlogged_budget_pct is None:
+            return self.default_waterlogged_budget_pct
+        return calibration.waterlogged_budget_pct
+
+    def waterlogged_allowance(self, calibration: Calibrated) -> timedelta:
+        return self.waterlogged_window() * (
+            self.waterlogged_budget_pct(calibration) / 100.0
+        )
 
     def fc_shortfall_target(self, calibration: Calibrated) -> float:
         """What a settled watering should reach an hour after watering.

@@ -150,6 +150,14 @@ rootball all look exactly like stable healthy soil to anything watching a
 threshold. They go into the same feed as care items, faults first, because a
 silent probe means nothing else about that plant can be believed.
 
+**Probe availability and waterlogging are budgets, not thresholds.** A
+threshold sees only the episode in front of it, so a probe that drops out for
+twenty minutes every night never trips it — every episode heals first. The
+budget sees the week: 99% availability over seven days, and a per-plant share
+of the week a pot may sit above field capacity. A single two-hour dropout is
+inside the budget and produces nothing, which is the false positive the old
+threshold used to raise. A probe genuinely down still pages after six hours.
+
 The watering-shortfall check has a known blind spot worth stating: it only runs
 on a *detected* watering, and complete channelling produces no rise to detect.
 That case is caught instead by the needs-water latch never clearing — which is

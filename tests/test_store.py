@@ -27,6 +27,7 @@ from custom_components.plant_care.store import (
 )
 
 NOW = datetime(2026, 9, 15, 12, 0, tzinfo=UTC)
+HOUR = timedelta(hours=1)
 
 T = TypeVar("T")
 
@@ -212,6 +213,45 @@ class TestDliHistory:
         assert log.dli_history("monstera")[date(2026, 9, 14)] == 6.4
 
 
+class TestBudgetIntervals:
+    def test_a_write_replaces_rather_than_merges(self) -> None:
+        """The monitor keeps its own list trimmed to the window, so the store
+        holds exactly what it was last handed."""
+        store = FakeStore()
+        log = EventLog(store)
+        run(log.async_record_intervals("monstera", "wet", [(NOW, NOW + HOUR)]))
+        run(
+            log.async_record_intervals(
+                "monstera", "wet", [(NOW + 2 * HOUR, NOW + 3 * HOUR)]
+            )
+        )
+        assert restarted(store).intervals("monstera", "wet") == [
+            (NOW + 2 * HOUR, NOW + 3 * HOUR)
+        ]
+
+    def test_budgets_and_plants_do_not_share_a_list(self) -> None:
+        store = FakeStore()
+        log = EventLog(store)
+        run(log.async_record_intervals("monstera", "wet", [(NOW, NOW + HOUR)]))
+        after = restarted(store)
+        assert after.intervals("monstera", "silence") == []
+        assert after.intervals("passionfruit", "wet") == []
+
+    def test_an_unreadable_pair_discards_only_itself(self) -> None:
+        store = FakeStore(
+            {
+                "intervals": {
+                    "monstera.wet": [
+                        [NOW.isoformat(), (NOW + HOUR).isoformat()],
+                        ["garbage"],
+                        [NOW.isoformat(), "not a time"],
+                    ]
+                }
+            }
+        )
+        assert restarted(store).intervals("monstera", "wet") == [(NOW, NOW + HOUR)]
+
+
 class TestCorruption:
     """One bad entry must not take the rest of the log with it.
 
@@ -279,6 +319,7 @@ class TestEverythingTogether:
         run(log.async_set_needs_water("passionfruit", True))
         run(log.async_set_killswitch_since("study_shelf", NOW))
         run(log.async_record_dli("monstera", date(2026, 9, 14), 6.4, 29))
+        run(log.async_record_intervals("monstera", "silence", [(NOW, NOW + HOUR)]))
 
         after = restarted(store)
 
@@ -287,6 +328,7 @@ class TestEverythingTogether:
         assert after.needs_water("passionfruit")
         assert after.killswitch_since("study_shelf") == NOW
         assert after.dli_history("monstera") == {date(2026, 9, 14): 6.4}
+        assert after.intervals("monstera", "silence") == [(NOW, NOW + HOUR)]
 
     def test_the_stored_shape_is_json_safe(self) -> None:
         """`Store` serialises to JSON, so a `date` or `datetime` key reaching it
@@ -299,6 +341,7 @@ class TestEverythingTogether:
         run(log.async_mark_care_done("monstera", "feed", NOW))
         run(log.async_set_killswitch_since("study_shelf", NOW))
         run(log.async_record_dli("monstera", date(2026, 9, 14), 6.4, 29))
+        run(log.async_record_intervals("monstera", "silence", [(NOW, NOW + HOUR)]))
 
         json.dumps(store.data)  # raises if anything in there is not JSON
 

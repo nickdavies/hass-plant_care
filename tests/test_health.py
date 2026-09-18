@@ -1,12 +1,15 @@
 """Faults that would otherwise read as healthy soil.
 
-Every duration here — twelve hours stuck, twenty-four waterlogged, an hour to
-settle — is driven by injected timestamps, so none of these tests wait.
+Every duration here — six hours silent, a week of dropouts, twelve hours
+stuck, a day wet, an hour to settle — is driven by injected timestamps, so none
+of these tests wait.
 """
 
 from __future__ import annotations
 
 from datetime import UTC, datetime, timedelta
+
+import pytest
 
 from custom_components.plant_care.model import (
     DEFAULT_POLICY,
@@ -46,7 +49,7 @@ class TestProbeSilent:
         plant that can die unnoticed."""
         mon = monitor()
         mon.restore(needs_water=False, last_watered=None, now=START)
-        assert IssueKind.PROBE_SILENT in kinds(mon, START + timedelta(hours=3))
+        assert IssueKind.PROBE_SILENT in kinds(mon, START + timedelta(hours=7))
 
     def test_a_cold_start_is_given_time_to_populate(self) -> None:
         """On a Home Assistant restart, MQTT discovery has not created the probe
@@ -67,13 +70,23 @@ class TestProbeSilent:
         feed(mon, [60.0])
         assert IssueKind.PROBE_SILENT not in kinds(mon, START + timedelta(minutes=10))
 
-    def test_silence_past_the_stale_window_is_reported(self) -> None:
-        """Twelve missed heartbeats. Generous enough to ride out a zigbee2mqtt
-        restart or a Flux redeploy without crying wolf."""
+    def test_silence_past_the_floor_is_reported(self) -> None:
+        """Six hours, whatever the heartbeat. A two-hour threshold produced
+        alerts that had healed by the time anyone looked."""
         mon = monitor()
         feed(mon, [60.0])
-        assert IssueKind.PROBE_SILENT not in kinds(mon, START + timedelta(hours=1))
-        assert IssueKind.PROBE_SILENT in kinds(mon, START + timedelta(hours=3))
+        assert IssueKind.PROBE_SILENT not in kinds(mon, START + timedelta(hours=5))
+        assert IssueKind.PROBE_SILENT in kinds(mon, START + timedelta(hours=7))
+
+    def test_a_two_hour_dropout_is_not_a_fault(self) -> None:
+        """The false positive the burn-rate shape exists to remove: a dropout
+        that heals is neither silent nor, on its own, flaky."""
+        mon = monitor()
+        feed(mon, [60.0] * 6)
+        gap_end = START + timedelta(hours=3)
+        assert kinds(mon, gap_end - timedelta(minutes=1)) == set()
+        feed(mon, [60.0] * 6, start=gap_end)
+        assert kinds(mon, gap_end + timedelta(minutes=50)) == set()
 
     def test_a_silent_probe_suppresses_the_other_reading_checks(self) -> None:
         """Otherwise a probe that stops mid-sentence reports as both silent and
@@ -88,10 +101,80 @@ class TestProbeSilent:
         feed(mon, [60.0])
         (issue,) = [
             i
-            for i in mon.health(START + timedelta(hours=4))
+            for i in mon.health(START + timedelta(hours=8))
             if i.kind is IssueKind.PROBE_SILENT
         ]
-        assert issue.value == 4.0
+        assert issue.value == 8.0
+
+
+class TestProbeFlaky:
+    """Never down long enough to be silent; down often enough to matter."""
+
+    def _dropouts(self, mon: MoistureMonitor, minutes: int, days: int) -> datetime:
+        """Reporting every ten minutes, all day, except one `minutes`-long gap a
+        day for `days` days. The value wobbles so nothing reads as stuck, and
+        stays between the refill threshold and field capacity."""
+        for day in range(days):
+            for slot in range(144):
+                offset = slot * 10
+                if 360 <= offset < 360 + minutes:
+                    continue  # the gap: from six hours in, for `minutes`
+                mon.observe(
+                    START + timedelta(days=day, minutes=offset),
+                    65.0 + 0.1 * (slot % 2),
+                )
+        return START + timedelta(days=days - 1, minutes=1430)
+
+    def test_a_dropout_every_day_spends_the_week(self) -> None:
+        """Half an hour a day is 210 minutes over the week, twice the pace of
+        the ~100 a 99% SLO allows. No single episode comes near the silent
+        floor."""
+        mon = monitor()
+        last = self._dropouts(mon, minutes=30, days=7)
+        assert kinds(mon, last) == {IssueKind.PROBE_FLAKY}
+
+    def test_the_odd_dropout_does_not(self) -> None:
+        mon = monitor()
+        last = self._dropouts(mon, minutes=30, days=2)
+        assert IssueKind.PROBE_FLAKY not in kinds(mon, last)
+
+    def test_the_stretch_since_the_last_report_counts(self) -> None:
+        """Dropouts banked plus a gap still open: the open one tips it over,
+        before it is anywhere near long enough to be silent."""
+        mon = monitor()
+        last = self._dropouts(mon, minutes=50, days=3)  # 150 minutes banked
+        assert IssueKind.PROBE_FLAKY not in kinds(mon, last)
+        # 70 minutes on: one heartbeat expected, sixty minutes past it.
+        assert IssueKind.PROBE_FLAKY in kinds(mon, last + timedelta(minutes=70))
+
+    def test_a_probe_that_is_silent_now_is_not_also_flaky(self) -> None:
+        mon = monitor()
+        last = self._dropouts(mon, minutes=30, days=7)
+        assert kinds(mon, last + timedelta(hours=7)) == {IssueKind.PROBE_SILENT}
+
+    def test_restored_dropouts_survive_a_restart(self) -> None:
+        """The slow burn exists to see across days; Home Assistant restarts
+        more often than that."""
+        before = monitor()
+        last = self._dropouts(before, minutes=30, days=7)
+
+        after = monitor()
+        after.restore(
+            needs_water=False,
+            last_watered=None,
+            now=last,
+            silence=before.intervals()["silence"],
+        )
+        last = feed(after, [65.0, 65.1, 65.0], start=last + timedelta(minutes=10))
+        assert IssueKind.PROBE_FLAKY in kinds(after, last)
+
+    def test_the_message_carries_the_arithmetic(self) -> None:
+        mon = monitor()
+        last = self._dropouts(mon, minutes=30, days=7)
+        (issue,) = [i for i in mon.health(last) if i.kind is IssueKind.PROBE_FLAKY]
+        assert "210 minutes" in issue.detail
+        assert "allowance of 101" in issue.detail
+        assert issue.value == pytest.approx(210 / 100.8, abs=0.01)
 
 
 class TestProbeStuck:
@@ -121,10 +204,13 @@ class TestProbeStuck:
 
 
 class TestWaterlogged:
-    def test_sitting_above_field_capacity_is_reported(self) -> None:
+    """Time above field capacity, at two speeds."""
+
+    def test_a_whole_day_above_field_capacity_is_not_draining(self) -> None:
         mon = monitor()
         last = feed(mon, [85.0] * 160)  # above 79.54 for over a day
-        assert IssueKind.WATERLOGGED in kinds(mon, last)
+        (issue,) = [i for i in mon.health(last) if i.kind is IssueKind.WATERLOGGED]
+        assert issue.label == "Not draining"
 
     def test_a_brief_spike_is_not(self) -> None:
         """A watering puts the pot above field capacity for a while by design.
@@ -133,11 +219,37 @@ class TestWaterlogged:
         last = feed(mon, [85.0] * 12)  # two hours
         assert IssueKind.WATERLOGGED not in kinds(mon, last)
 
-    def test_draining_back_down_clears_the_clock(self) -> None:
+    def test_draining_back_down_clears_the_fast_page(self) -> None:
         mon = monitor()
         feed(mon, [85.0] * 100)
         last = feed(mon, [70.0] * 10, start=START + timedelta(hours=17))
         assert IssueKind.WATERLOGGED not in kinds(mon, last)
+
+    def test_wet_more_of_the_week_than_tolerated_is_overwatered(self) -> None:
+        """Twelve hours wet, twelve dry, every day. It drains — no single day
+        trips the fast page — and it is above field capacity half the time,
+        past the 40% this plant tolerates. The old check could not see this."""
+        mon = monitor()
+        when = START
+        for _ in range(7):
+            when = feed(mon, [85.0] * 72, start=when) + timedelta(minutes=10)
+            when = feed(mon, [70.0] * 72, start=when) + timedelta(minutes=10)
+        (issue,) = [i for i in mon.health(when) if i.kind is IssueKind.WATERLOGGED]
+        assert issue.label == "Overwatered"
+        assert "50% of the last 7 days" in issue.detail
+        assert "budget of 40%" in issue.detail
+
+    def test_a_tolerant_plant_is_not(self) -> None:
+        """The same week against a per-plant budget that allows it."""
+        marshy = Calibrated(
+            field_capacity=79.54, dry_point=53.18, waterlogged_budget_pct=60.0
+        )
+        mon = monitor(marshy)
+        when = START
+        for _ in range(7):
+            when = feed(mon, [85.0] * 72, start=when) + timedelta(minutes=10)
+            when = feed(mon, [70.0] * 72, start=when) + timedelta(minutes=10)
+        assert IssueKind.WATERLOGGED not in kinds(mon, when)
 
     def test_not_reported_while_calibrating(self) -> None:
         """Field capacity is what "too wet" is measured against, and a
@@ -145,6 +257,23 @@ class TestWaterlogged:
         mon = monitor(Calibrating())
         last = feed(mon, [95.0] * 160)
         assert IssueKind.WATERLOGGED not in kinds(mon, last)
+
+    def test_closed_wet_stretches_survive_a_restart(self) -> None:
+        before = monitor()
+        when = START
+        for _ in range(7):
+            when = feed(before, [85.0] * 72, start=when) + timedelta(minutes=10)
+            when = feed(before, [70.0] * 72, start=when) + timedelta(minutes=10)
+
+        after = monitor()
+        after.restore(
+            needs_water=False,
+            last_watered=None,
+            now=when,
+            wet=before.intervals()["wet"],
+        )
+        last = feed(after, [70.0] * 3, start=when)
+        assert IssueKind.WATERLOGGED in kinds(after, last)
 
 
 class TestWateringShortfall:

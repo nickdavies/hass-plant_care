@@ -1,12 +1,13 @@
-"""The derivations that moved here from the generator.
+"""The derivations from calibration and probe facts.
 
-These were pinned in Rust against the hand-written passionfruit config. That
-config is what this component replaces, so the gate moves here with them: if
-these numbers drift, a plant that has been watered correctly for months starts
-being judged differently.
+Pinned against the hand-written passionfruit package this component replaces:
+if these numbers drift, a plant that has been watered correctly for months
+starts being judged differently.
 """
 
 from __future__ import annotations
+
+from datetime import timedelta
 
 import pytest
 
@@ -17,8 +18,9 @@ from custom_components.plant_care.model import (
     ProbeFacts,
 )
 
-# The passionfruit, measured 2026-08-27. See inputs/plants.yaml in homelab-data
-# for how these were taken and why an earlier fieldCapacity was discarded.
+# The passionfruit, measured 2026-08-27. See packages/plants/plant_care.yaml in
+# hass-configs for how these were taken and why an earlier field capacity was
+# discarded.
 PASSIONFRUIT = Calibrated(field_capacity=79.54, dry_point=53.18, fc_tolerance=8.0)
 
 # ThirdReality 3RSM0347Z: ~10 minute heartbeat, >=1% report-on-change deadband.
@@ -51,11 +53,29 @@ class TestPassionfruitRegression:
         assert DEFAULT_POLICY.fc_shortfall_target(PASSIONFRUIT) == pytest.approx(71.54)
 
     def test_probe_derived_windows(self) -> None:
-        # plant_signals.yaml carried max_age 1h / sampling_size 30, and
-        # plant_sensor_health.yaml carried stale_hours 2.
+        # plant_signals.yaml carried max_age 1h / sampling_size 30.
         assert DEFAULT_POLICY.median_window_hours(THIRD_REALITY_GEN2) == 1
         assert DEFAULT_POLICY.median_sampling_size(THIRD_REALITY_GEN2) == 30
-        assert DEFAULT_POLICY.stale_hours(THIRD_REALITY_GEN2) == 2
+
+    def test_the_silent_floor_wins_over_a_fast_heartbeat(self) -> None:
+        """Twelve heartbeats of this probe is two hours, which was the old
+        threshold and produced alerts that had healed by the time anyone
+        looked. The floor is what applies."""
+        assert DEFAULT_POLICY.stale_hours(THIRD_REALITY_GEN2) == 6
+
+    def test_the_availability_allowance_is_about_a_hundred_minutes(self) -> None:
+        assert DEFAULT_POLICY.availability_allowance() == pytest.approx(
+            timedelta(minutes=100.8)
+        )
+
+    def test_the_waterlogged_allowance_is_per_plant(self) -> None:
+        assert DEFAULT_POLICY.waterlogged_allowance(PASSIONFRUIT) == timedelta(
+            days=7 * 0.4
+        )
+        marshy = Calibrated(
+            field_capacity=80.0, dry_point=50.0, waterlogged_budget_pct=80.0
+        )
+        assert DEFAULT_POLICY.waterlogged_allowance(marshy) == timedelta(days=7 * 0.8)
 
 
 class TestAvailableWaterScale:

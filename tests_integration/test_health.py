@@ -98,7 +98,12 @@ class TestSilentProbe:
         assert "probe_silent" not in kinds_for(integration, "monstera")
 
         # The passionfruit keeps reporting; the monstera stops. Only one should
-        # be reported.
+        # be reported — and not before the six-hour floor.
+        for _ in range(20):
+            freezer.tick(timedelta(minutes=10))
+            await probe_reports(integration, PASSIONFRUIT_RAW, 60.0)
+        assert "probe_silent" not in kinds_for(integration, "monstera")
+
         for _ in range(20):
             freezer.tick(timedelta(minutes=10))
             await probe_reports(integration, PASSIONFRUIT_RAW, 60.0)
@@ -109,7 +114,7 @@ class TestSilentProbe:
     async def test_it_clears_when_the_probe_returns(
         self, integration: HomeAssistant, freezer: FrozenDateTimeFactory
     ) -> None:
-        for _ in range(20):
+        for _ in range(40):
             freezer.tick(timedelta(minutes=10))
             await probe_reports(integration, PASSIONFRUIT_RAW, 60.0)
         assert "probe_silent" in kinds_for(integration, "monstera")
