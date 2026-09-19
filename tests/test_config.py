@@ -45,10 +45,27 @@ DLI_CATEGORIES: dict[str, Any] = {
     "shade": {"low": 3.0, "high": 6.0},
 }
 
+OWNERS: dict[str, Any] = {
+    "nick": "notify.nick",
+    "britta": "notify.britta",
+    "primary": "notify.phones",
+}
+
+# The household file, shared with light_motion_profiles. `guests` and
+# `everyone` name people this component knows nothing about, on purpose.
+GROUPS: dict[str, Any] = {
+    "primary": ["nick", "britta"],
+    "guests": ["guest_1", "guest_2"],
+    "everyone": ["nick", "britta", "guest_1", "guest_2"],
+}
+
+SYSTEM_NOTIFY = "notify.phones"
+
 CALIBRATED_PLANT: dict[str, Any] = {
     "name": "passionfruit",
     "display": "Passionfruit",
     "species": "passiflora edulis",
+    "owner": "nick",
     "moisture": {
         "model": "thirdreality_soil_gen2",
         "entities": {
@@ -67,6 +84,7 @@ CALIBRATED_PLANT: dict[str, Any] = {
 
 CALIBRATING_PLANT: dict[str, Any] = {
     "name": "monstera",
+    "owner": "nick",
     "moisture": {
         "model": "thirdreality_soil_gen2",
         "entities": {
@@ -79,6 +97,7 @@ CALIBRATING_PLANT: dict[str, Any] = {
 SENSORLESS_PLANT: dict[str, Any] = {
     "name": "front_step_pot",
     "display": "Front step pot",
+    "owner": "nick",
     "care": [{"task": "water", "every_days": 4}],
 }
 
@@ -104,6 +123,7 @@ STUDY_LUX: dict[str, Any] = {
 
 LIT_PLANT: dict[str, Any] = {
     "name": "monstera",
+    "owner": "nick",
     "lights": ["study_shelf"],
     "lux": "study_shelf",
     "dli": {"category": "foliage_tropical"},
@@ -121,6 +141,9 @@ def load_config(
         "probe_models": PROBE_MODELS,
         "care_tasks": CARE_TASKS,
         "dli_categories": DLI_CATEGORIES,
+        "owners": OWNERS,
+        "groups": GROUPS,
+        "system_notify": SYSTEM_NOTIFY,
         "plants": list(plants),
     }
     if lights is not None:
@@ -226,7 +249,15 @@ class TestTables:
 
     def test_the_tables_are_optional(self) -> None:
         """A config with nothing but plants that reference nothing is valid."""
-        config = parse(schema()({"plants": [{"name": "pot"}]}))
+        config = parse(
+            schema()(
+                {
+                    "plants": [{"name": "pot", "owner": "nick"}],
+                    "owners": {"nick": "notify.nick"},
+                    "system_notify": "notify.nick",
+                }
+            )
+        )
         assert config.plants[0].display == "Pot"
 
 
@@ -365,31 +396,33 @@ class TestCareTasks:
 
 class TestPlantShape:
     def test_a_plant_needs_nothing_but_a_name(self) -> None:
-        (plant,) = load({"name": "front_step_pot"})
+        (plant,) = load({"name": "front_step_pot", "owner": "nick"})
         assert plant.moisture is None
         assert plant.care == ()
         assert plant.species is None
         assert plant.light_source is None
 
     def test_display_defaults_to_the_title_cased_name(self) -> None:
-        (plant,) = load({"name": "ficus_alii"})
+        (plant,) = load({"name": "ficus_alii", "owner": "nick"})
         assert plant.display == "Ficus Alii"
 
     def test_display_overrides_the_derived_name(self) -> None:
-        (plant,) = load({"name": "ficus_elastica", "display": "Rubber Tree"})
+        (plant,) = load(
+            {"name": "ficus_elastica", "display": "Rubber Tree", "owner": "nick"}
+        )
         assert plant.display == "Rubber Tree"
 
     def test_a_blank_or_padded_display_is_rejected(self) -> None:
         """Both render as a card with no readable title."""
         for bad in ["", "   ", " Monstera", "Monstera "]:
             with pytest.raises(vol.Invalid):
-                load({"name": "monstera", "display": bad})
+                load({"name": "monstera", "display": bad, "owner": "nick"})
 
     def test_a_name_must_be_an_identifier(self) -> None:
         """Every entity id is built from it."""
         for bad in ["Monstera", "big monstera", "monstera-1", ""]:
             with pytest.raises(vol.Invalid):
-                load({"name": bad})
+                load({"name": bad, "owner": "nick"})
 
     def test_duplicate_plant_names_are_rejected(self) -> None:
         """Every entity id is built from the name, so a duplicate would collide
@@ -684,21 +717,130 @@ class TestDli:
         assert grow.light_source is Lit.GROW
 
 
-# ---- Notify -------------------------------------------------------------
+# ---- Owners -------------------------------------------------------------
+
+BRITTAS_PLANT: dict[str, Any] = {**SENSORLESS_PLANT, "owner": "britta"}
+SHARED_PLANT: dict[str, Any] = {**CALIBRATING_PLANT, "owner": "primary"}
 
 
-class TestNotify:
-    def test_absent_means_the_feed_is_only_a_sensor(self) -> None:
-        assert load_config(CALIBRATED_PLANT).notify is None
+class TestOwners:
+    def test_an_owner_is_required(self) -> None:
+        """An unowned plant has no phone to page and no tab to appear on."""
+        unowned = {k: v for k, v in CALIBRATED_PLANT.items() if k != "owner"}
+        with pytest.raises(vol.Invalid, match="owner"):
+            load(unowned)
 
-    def test_a_notify_action_is_kept_as_written(self) -> None:
-        assert (
-            load_config(CALIBRATED_PLANT, notify="notify.nick").notify == "notify.nick"
+    def test_an_unknown_owner_names_the_plant_and_the_owner(self) -> None:
+        with pytest.raises(InvalidPlantConfig, match="front_step_pot.*ghost"):
+            load({**SENSORLESS_PLANT, "owner": "ghost"})
+
+    def test_a_person_owner_resolves_to_their_action(self) -> None:
+        config = load_config(CALIBRATED_PLANT, BRITTAS_PLANT)
+        nicks, brittas = config.plants
+        assert config.notify_for(nicks) == "notify.nick"
+        assert config.notify_for(brittas) == "notify.britta"
+
+    def test_a_group_owner_resolves_to_the_shared_action(self) -> None:
+        """One action per group, not one per member: the group's phones are
+        the notify platform's business."""
+        config = load_config(SHARED_PLANT)
+        (shared,) = config.plants
+        assert config.is_group("primary")
+        assert config.notify_for(shared) == "notify.phones"
+
+    def test_people_are_the_owners_that_are_not_groups(self) -> None:
+        config = load_config(CALIBRATED_PLANT)
+        assert config.people() == ("nick", "britta")
+        assert config.members("nick") == ("nick",)
+        assert config.members("primary") == ("nick", "britta")
+
+    def test_a_person_sees_their_own_and_their_groups_plants(self) -> None:
+        config = load_config(CALIBRATED_PLANT, BRITTAS_PLANT, SHARED_PLANT)
+        assert [p.name for p in config.plants_for("britta")] == [
+            "front_step_pot",
+            "monstera",
+        ]
+        assert [p.name for p in config.plants_for("nick")] == [
+            "passionfruit",
+            "monstera",
+        ]
+
+    def test_a_persons_fixtures_are_those_over_their_plants_once_each(
+        self,
+    ) -> None:
+        spare = {
+            **STUDY_LIGHT,
+            "name": "spare_shelf",
+            "switch": "switch.spare_outlet_grow_lamp_1",
+        }
+        under_both = {**LIT_PLANT, "name": "fern", "lights": ["study_shelf"]}
+        config = load_config(
+            LIT_PLANT,
+            under_both,
+            {**BRITTAS_PLANT, "lights": ["spare_shelf"]},
+            lights=[STUDY_LIGHT, spare],
+            lux=[STUDY_LUX],
         )
+        assert [f.name for f in config.fixtures_for_person("nick")] == ["study_shelf"]
+        assert [f.name for f in config.fixtures_for_person("britta")] == ["spare_shelf"]
+
+    def test_a_group_member_without_an_action_names_the_group_and_member(
+        self,
+    ) -> None:
+        """Every member gets a tab and a sensor, so needs an action."""
+        with pytest.raises(InvalidPlantConfig, match="owner 'primary'.*'britta'"):
+            load_config(
+                CALIBRATED_PLANT,
+                owners={"nick": "notify.nick", "primary": "notify.phones"},
+            )
+
+    def test_a_group_inside_a_group_is_refused(self) -> None:
+        with pytest.raises(InvalidPlantConfig, match="owner 'everyone'.*'primary'"):
+            load_config(
+                CALIBRATED_PLANT,
+                owners={**OWNERS, "everyone": "notify.phones"},
+                groups={**GROUPS, "everyone": ["primary"]},
+            )
+
+    def test_an_empty_group_is_refused(self) -> None:
+        with pytest.raises(InvalidPlantConfig, match="owner 'primary'.*no members"):
+            load_config(CALIBRATED_PLANT, groups={**GROUPS, "primary": []})
+
+    def test_a_group_nobody_owns_through_may_name_strangers(self) -> None:
+        """`guests` is not in `owners`, so its strangers are not checked."""
+        config = load_config(CALIBRATED_PLANT)
+        assert config.is_group("guests")
+        assert "guests" not in config.owners.actions
+        assert "guest_1" not in config.people()
+
+    def test_an_owner_key_must_be_an_identifier(self) -> None:
+        """They become entity ids and tab paths."""
+        with pytest.raises(InvalidPlantConfig, match="owners key 'Nick'"):
+            load_config(CALIBRATED_PLANT, owners={**OWNERS, "Nick": "notify.nick"})
+
+    def test_all_is_not_an_owner(self) -> None:
+        """The shared tab's path."""
+        with pytest.raises(InvalidPlantConfig, match="'all'.*reserved"):
+            load_config(CALIBRATED_PLANT, owners={**OWNERS, "all": "notify.phones"})
 
     @pytest.mark.parametrize(
         "bad", ["nick", "sensor.nick", "notify.Nick", "notify.", 3]
     )
     def test_anything_but_a_notify_action_is_rejected(self, bad: Any) -> None:
         with pytest.raises(vol.Invalid, match="notify action"):
-            load_config(CALIBRATED_PLANT, notify=bad)
+            load_config(CALIBRATED_PLANT, owners={**OWNERS, "nick": bad})
+        with pytest.raises(vol.Invalid, match="notify action"):
+            load_config(CALIBRATED_PLANT, system_notify=bad)
+
+    def test_system_notify_is_required(self) -> None:
+        """A fault belonging to no plant still has to reach someone."""
+        document = {
+            "owners": OWNERS,
+            "groups": GROUPS,
+            "plants": [CALIBRATED_PLANT],
+        }
+        with pytest.raises(vol.Invalid, match="system_notify"):
+            schema()(document)
+
+    def test_system_notify_is_kept_as_written(self) -> None:
+        assert load_config(CALIBRATED_PLANT).owners.system_notify == "notify.phones"

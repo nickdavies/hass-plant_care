@@ -27,6 +27,7 @@ MUST_IMPORT_CLEAN = (
     "custom_components.plant_care.model.config",
     "custom_components.plant_care.model.policy",
     "custom_components.plant_care.model.naming",
+    "custom_components.plant_care.model.owners",
     "custom_components.plant_care.store",
     "custom_components.plant_care.const",
 )

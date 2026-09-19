@@ -14,10 +14,11 @@ therefore the CI of the repo holding the config — runs every one of them:
    every reference that would otherwise fail quietly at runtime is refused here
    with a message naming the plant or fixture.
 
-The config has three lookup tables — probe models, care tasks, DLI categories —
-so a fact is written once and referenced by name. Everything a plant names
-outside this file is a Home Assistant entity id, written explicitly: nothing is
-derived from a naming convention that another integration might not share.
+The config has four lookup tables — probe models, care tasks, DLI categories,
+owners — so a fact is written once and referenced by name. Everything a plant
+names outside this file is a Home Assistant entity id, written explicitly:
+nothing is derived from a naming convention that another integration might not
+share.
 
 Uses plain voluptuous rather than `homeassistant.helpers.config_validation`, so
 this module stays importable without Home Assistant and its tests need no mocks.
@@ -42,6 +43,7 @@ from .light import (
     LuxFixture,
     Weekday,
 )
+from .owners import Owners
 from .plant import (
     Calibrated,
     Calibrating,
@@ -62,7 +64,12 @@ FIELD_DLI_CATEGORIES = "dli_categories"
 FIELD_LIGHTS = "lights"
 FIELD_LUX_SENSORS = "lux_sensors"
 FIELD_PLANTS = "plants"
-FIELD_NOTIFY = "notify"
+FIELD_OWNERS = "owners"
+FIELD_GROUPS = "groups"
+FIELD_SYSTEM_NOTIFY = "system_notify"
+FIELD_OWNER = "owner"
+RESERVED_OWNER_ALL = "all"
+"""The dashboard's shared tab path, so not an owner."""
 
 FIELD_NAME = "name"
 FIELD_DISPLAY = "display"
@@ -405,6 +412,7 @@ def _plant_schema() -> vol.Schema:
             vol.Required(FIELD_NAME): _slug,
             vol.Optional(FIELD_DISPLAY): _display,
             vol.Optional(FIELD_SPECIES): str,
+            vol.Required(FIELD_OWNER): str,
             vol.Optional(FIELD_MOISTURE): _moisture_schema(),
             vol.Optional(FIELD_CARE): [_care_schema()],
             vol.Optional(FIELD_LIGHTS): [str],
@@ -428,7 +436,11 @@ def schema() -> vol.Schema:
             vol.Optional(FIELD_LIGHTS, default=[]): [_light_schema()],
             vol.Optional(FIELD_LUX_SENSORS, default=[]): [_lux_schema()],
             vol.Required(FIELD_PLANTS): [_plant_schema()],
-            vol.Optional(FIELD_NOTIFY): _notify_action,
+            vol.Optional(FIELD_OWNERS, default={}): {str: _notify_action},
+            # The shared household file; members are checked only for groups
+            # that `owners` names.
+            vol.Optional(FIELD_GROUPS, default={}): {str: [str]},
+            vol.Required(FIELD_SYSTEM_NOTIFY): _notify_action,
         }
     )
 
@@ -487,6 +499,21 @@ def _parse_dli_categories(data: Mapping[str, Any]) -> dict[str, Band]:
         except ValueError as err:
             raise InvalidPlantConfig(f"dli category '{name}': {err}") from err
     return categories
+
+
+def _parse_owners(data: Mapping[str, Any]) -> Owners:
+    """Owner keys become entity ids and tab paths, so they are checked as
+    identifiers. Group keys are another component's too, so they are not."""
+    return Owners(
+        actions={
+            _table_key(FIELD_OWNERS, key): action
+            for key, action in data.get(FIELD_OWNERS, {}).items()
+        },
+        groups={
+            key: tuple(members) for key, members in data.get(FIELD_GROUPS, {}).items()
+        },
+        system_notify=data[FIELD_SYSTEM_NOTIFY],
+    )
 
 
 # ---- Fixtures -----------------------------------------------------------
@@ -693,6 +720,7 @@ def _parse_plant(
         display=data.get(FIELD_DISPLAY, _title_case(name)),
         species=data.get(FIELD_SPECIES),
         moisture=moisture,
+        owner=data[FIELD_OWNER],
         care=_parse_care(
             data.get(FIELD_CARE, []),
             name,
@@ -717,11 +745,9 @@ class PlantCareConfig:
     """
 
     plants: tuple[Plant, ...]
+    owners: Owners
     lights: tuple[LightFixture, ...] = ()
     lux_sensors: tuple[LuxFixture, ...] = ()
-    notify: str | None = None
-    """The notify action new feed items are pushed to. `None` means the feed
-    is a sensor and nothing more — the dashboard is the only reader."""
 
     def light(self, name: str) -> LightFixture | None:
         return next((f for f in self.lights if f.name == name), None)
@@ -732,6 +758,28 @@ class PlantCareConfig:
     def fixtures_for(self, plant: Plant) -> tuple[LightFixture, ...]:
         return tuple(f for name in plant.lights if (f := self.light(name)) is not None)
 
+    # ---- Owners ---------------------------------------------------------
+
+    def notify_for(self, plant: Plant) -> str:
+        return self.owners.action(plant.owner)
+
+    def people(self) -> tuple[str, ...]:
+        return self.owners.people()
+
+    def is_group(self, name: str) -> bool:
+        return self.owners.is_group(name)
+
+    def members(self, name: str) -> tuple[str, ...]:
+        return self.owners.members(name)
+
+    def plants_for(self, person: str) -> tuple[Plant, ...]:
+        """Owned outright, or through a group."""
+        return tuple(p for p in self.plants if person in self.owners.members(p.owner))
+
+    def fixtures_for_person(self, person: str) -> tuple[LightFixture, ...]:
+        wanted = {name for plant in self.plants_for(person) for name in plant.lights}
+        return tuple(f for f in self.lights if f.name in wanted)
+
     def unreferenced_lights(self) -> tuple[LightFixture, ...]:
         """Fixtures no plant sits under.
 
@@ -741,6 +789,34 @@ class PlantCareConfig:
         """
         referenced = {name for plant in self.plants for name in plant.lights}
         return tuple(f for f in self.lights if f.name not in referenced)
+
+
+def _check_owners(owners: Owners) -> None:
+    """Every group in `owners` must be made of people in `owners`: each member
+    gets a tab and a sensor. Groups only in the shared file are not checked."""
+    if RESERVED_OWNER_ALL in owners.actions:
+        raise InvalidPlantConfig(
+            f"owner '{RESERVED_OWNER_ALL}' is reserved for the shared dashboard tab"
+        )
+    for name in owners.actions:
+        if not owners.is_group(name):
+            continue
+        members = owners.groups[name]
+        if not members:
+            raise InvalidPlantConfig(
+                f"owner '{name}' is a group with no members, so nobody would be told"
+            )
+        for member in members:
+            if owners.is_group(member):
+                raise InvalidPlantConfig(
+                    f"owner '{name}' is a group whose member '{member}' is itself "
+                    "a group; a group may only contain people"
+                )
+            if member not in owners.actions:
+                raise InvalidPlantConfig(
+                    f"owner '{name}' is a group whose member '{member}' is not in "
+                    f"{FIELD_OWNERS}, so it has no notify action and no dashboard"
+                )
 
 
 def _reject_duplicates(names: list[str], what: str) -> None:
@@ -768,19 +844,26 @@ def parse(data: Mapping[str, Any]) -> PlantCareConfig:
             _parse_plant(entry, probe_models, care_tasks, dli_categories)
             for entry in data[FIELD_PLANTS]
         ),
+        owners=_parse_owners(data),
         lights=_parse_lights(data),
         lux_sensors=_parse_lux(data),
-        notify=data.get(FIELD_NOTIFY),
     )
 
     _reject_duplicates([p.name for p in config.plants], "plant")
     _reject_duplicates([f.name for f in config.lights], "light fixture")
     _reject_duplicates([f.name for f in config.lux_sensors], "lux fixture")
 
+    _check_owners(config.owners)
+
     fixture_names = {f.name for f in config.lights}
     lux_names = {f.name for f in config.lux_sensors}
 
     for plant in config.plants:
+        if plant.owner not in config.owners.actions:
+            raise InvalidPlantConfig(
+                f"plant '{plant.name}' names owner '{plant.owner}', which is not "
+                f"in {FIELD_OWNERS}"
+            )
         for name in plant.lights:
             if name not in fixture_names:
                 raise InvalidPlantConfig(
