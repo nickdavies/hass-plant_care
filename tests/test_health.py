@@ -176,6 +176,52 @@ class TestProbeFlaky:
         assert "allowance of 101" in issue.detail
         assert issue.value == pytest.approx(210 / 100.8, abs=0.01)
 
+    def test_a_heartbeat_a_few_seconds_late_is_not_a_dropout(self) -> None:
+        """The false positive found in the field: a probe whose ten-minute
+        cycle runs at 10:02 was charged two seconds per heartbeat, over half
+        an hour a week, for reporting perfectly."""
+        mon = monitor()
+        feed(mon, [65.0, 65.1] * 504, every=timedelta(minutes=10, seconds=2))
+        assert mon.intervals()["silence"] == []
+
+    def test_one_dropped_report_costs_nothing(self) -> None:
+        """Moisture is judged over hours; a probe that misses the odd report
+        is not a probe worth hearing about."""
+        mon = monitor()
+        feed(mon, [65.0])
+        mon.observe(START + timedelta(minutes=20), 65.1)
+        assert mon.intervals()["silence"] == []
+
+    def test_two_dropped_reports_count_from_when_the_first_was_due(self) -> None:
+        mon = monitor()
+        feed(mon, [65.0])
+        mon.observe(START + timedelta(minutes=30), 65.1)
+        (gap,) = mon.intervals()["silence"]
+        assert gap.start == START + timedelta(minutes=10)
+        assert gap.end == START + timedelta(minutes=30)
+
+    def test_a_report_still_only_late_is_not_an_open_dropout(self) -> None:
+        """Up to two heartbeats, the stretch since the last report is not yet
+        silence — the same allowance the closed gaps get, so the clock cannot
+        page on a report that then arrives. 200 minutes banked is just under
+        the 201.6 that pages; fourteen minutes on, nothing has been added
+        (the old accounting added four and paged), twenty minutes on still
+        nothing, and twenty-two minutes on the due heartbeat's twelve have."""
+        mon = monitor()
+        last = self._dropouts(mon, minutes=50, days=4)  # 200 minutes banked
+        assert IssueKind.PROBE_FLAKY not in kinds(mon, last + timedelta(minutes=14))
+        assert IssueKind.PROBE_FLAKY not in kinds(mon, last + timedelta(minutes=20))
+        assert IssueKind.PROBE_FLAKY in kinds(mon, last + timedelta(minutes=22))
+
+    def test_the_message_says_how_the_budget_was_spent(self) -> None:
+        """Seven half-hour dropouts and a week of single missed reports read
+        the same as a total. The shape is what says whether to look at the
+        probe or at the policy."""
+        mon = monitor()
+        last = self._dropouts(mon, minutes=30, days=7)
+        (issue,) = [i for i in mon.health(last) if i.kind is IssueKind.PROBE_FLAKY]
+        assert "across 7 stretches, the longest 30 minutes" in issue.detail
+
 
 class TestProbeStuck:
     """Reporting fine, but the value has not moved. A pot in use always drifts."""

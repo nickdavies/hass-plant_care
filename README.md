@@ -177,6 +177,18 @@ of the week a pot may sit above field capacity. A single two-hour dropout is
 inside the budget and produces nothing, which is the false positive the old
 threshold used to raise. A probe genuinely down still pages after six hours.
 
+**A heartbeat is missed after a multiple of it, not the instant it is late.**
+The first week of the availability budget paged for every probe. The probe's
+ten-minute clock was measured wandering between 9:59 and 10:02, and a report
+two seconds late was being charged as two seconds of silence: half an hour a
+week for reporting perfectly. A report now counts as missed after
+`missed_heartbeat_after` heartbeats (2.0, so twenty minutes: one dropped
+report is forgiven, two in a row are not), and the silence then runs from
+when the report was due. Moisture is judged over hours, so the odd dropped
+report costs nothing worth hearing about. The flaky message says how many
+stretches spent the budget and how long the longest was, which is what says
+whether to tune the multiple further.
+
 The watering-shortfall check has a known blind spot worth stating: it only runs
 on a *detected* watering, and complete channelling produces no rise to detect.
 That case is caught instead by the needs-water latch never clearing — which is

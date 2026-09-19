@@ -117,3 +117,19 @@ class TestRestore:
             TimeBudget(window=timedelta(0), allowance=HOUR)
         with pytest.raises(ValueError):
             TimeBudget(window=WEEK, allowance=-HOUR)
+
+
+class TestStretches:
+    def test_they_are_clipped_to_the_period_and_in_order(self) -> None:
+        b = budget()
+        b.add(Interval(T0 + 10 * HOUR, T0 + 11 * HOUR))
+        b.add(Interval(T0, T0 + 2 * HOUR))
+        assert b.stretches(T0 + 3 * HOUR, over=2 * HOUR) == [
+            Interval(T0 + HOUR, T0 + 2 * HOUR)
+        ]
+        now = T0 + 12 * HOUR
+        assert b.stretches(now, WEEK, open_since=T0 + 11 * HOUR + 30 * MINUTE) == [
+            Interval(T0, T0 + 2 * HOUR),
+            Interval(T0 + 10 * HOUR, T0 + 11 * HOUR),
+            Interval(T0 + 11 * HOUR + 30 * MINUTE, now),
+        ]
