@@ -177,6 +177,12 @@ of the week a pot may sit above field capacity. A single two-hour dropout is
 inside the budget and produces nothing, which is the false positive the old
 threshold used to raise. A probe genuinely down still pages after six hours.
 
+**A heartbeat is missed after a multiple of it, not the instant it is late.**
+The probe's clock is not Home Assistant's, and moisture is judged over hours.
+A report counts as missed after `missed_heartbeat_after` heartbeats (2.0, so
+twenty minutes: one dropped report is forgiven, two in a row are not), and
+the silence then runs from when the report was due.
+
 The watering-shortfall check has a known blind spot worth stating: it only runs
 on a *detected* watering, and complete channelling produces no rise to detect.
 That case is caught instead by the needs-water latch never clearing — which is

@@ -176,6 +176,31 @@ class TestProbeFlaky:
         assert "allowance of 101" in issue.detail
         assert issue.value == pytest.approx(210 / 100.8, abs=0.01)
 
+    def test_one_dropped_report_costs_nothing(self) -> None:
+        """Moisture is judged over hours; a probe that misses the odd report
+        is not a probe worth hearing about."""
+        mon = monitor()
+        feed(mon, [65.0])
+        mon.observe(START + timedelta(minutes=20), 65.1)
+        assert mon.intervals()["silence"] == []
+
+    def test_two_dropped_reports_count_from_when_the_first_was_due(self) -> None:
+        mon = monitor()
+        feed(mon, [65.0])
+        mon.observe(START + timedelta(minutes=30), 65.1)
+        (gap,) = mon.intervals()["silence"]
+        assert gap.start == START + timedelta(minutes=10)
+        assert gap.end == START + timedelta(minutes=30)
+
+    def test_the_open_stretch_gets_the_same_forgiveness(self) -> None:
+        """200 minutes banked is just under the 201.6 that pages. Twenty
+        minutes on, nothing has been added; twenty-two on, the due
+        heartbeat's twelve have."""
+        mon = monitor()
+        last = self._dropouts(mon, minutes=50, days=4)  # 200 minutes banked
+        assert IssueKind.PROBE_FLAKY not in kinds(mon, last + timedelta(minutes=20))
+        assert IssueKind.PROBE_FLAKY in kinds(mon, last + timedelta(minutes=22))
+
 
 class TestProbeStuck:
     """Reporting fine, but the value has not moved. A pot in use always drifts."""

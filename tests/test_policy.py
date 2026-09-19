@@ -7,7 +7,7 @@ starts being judged differently.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -134,3 +134,27 @@ class TestModelInvariants:
     def test_a_zero_heartbeat_probe_cannot_be_constructed(self) -> None:
         with pytest.raises(ValueError, match="positive"):
             ProbeFacts(heartbeat_minutes=0, deadband_pp=1.0)
+
+
+class TestMissedHeartbeat:
+    """A heartbeat is missed after a multiple of it, 2.0 by default: one
+    dropped report is forgiven, two in a row are not."""
+
+    T0 = datetime(2026, 9, 18, 8, 0, tzinfo=UTC)
+
+    def test_one_dropped_report_is_forgiven(self) -> None:
+        late = self.T0 + timedelta(minutes=20)
+        assert DEFAULT_POLICY.silence_from(THIRD_REALITY_GEN2, self.T0, late) is None
+
+    def test_two_in_a_row_count_from_when_the_first_was_due(self) -> None:
+        late = self.T0 + timedelta(minutes=20, seconds=1)
+        assert DEFAULT_POLICY.silence_from(
+            THIRD_REALITY_GEN2, self.T0, late
+        ) == self.T0 + timedelta(minutes=10)
+
+    def test_the_multiple_is_policy(self) -> None:
+        strict = Policy(missed_heartbeat_after=1.5)
+        late = self.T0 + timedelta(minutes=16)
+        assert strict.silence_from(THIRD_REALITY_GEN2, self.T0, late) == (
+            self.T0 + timedelta(minutes=10)
+        )

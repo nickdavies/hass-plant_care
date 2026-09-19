@@ -12,7 +12,7 @@ overrides have somewhere to go later without a signature change everywhere.
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 
 from .plant import Calibrated, ProbeFacts
 
@@ -89,6 +89,18 @@ class Policy:
     wedged — none of which look like anything from a threshold's point of view.
     """
 
+    missed_heartbeat_after: float = 2.0
+    """How many heartbeats may pass without a report before one counts as
+    missed. At a ten-minute heartbeat, 2.0 is twenty minutes: a single
+    dropped report is forgiven, two in a row are not.
+
+    The probe's clock is not Home Assistant's — a ten-minute cycle arrives
+    anywhere from 9:59 to 10:02 — and moisture is judged over hours, so
+    neither a report a few seconds late nor the odd dropped one is worth
+    charging against availability. Once a report is judged missed, the
+    silence is counted from when it was due, one heartbeat after the last.
+    """
+
     availability_window_days: int = 7
     availability_slo_pct: float = 99.0
     """The probe reports for at least this share of the window.
@@ -157,6 +169,21 @@ class Policy:
             self.silent_floor_hours,
             _ceil_div(probe.heartbeat_minutes * self.stale_heartbeats, 60),
         )
+
+    def silence_from(
+        self, probe: ProbeFacts, previous: datetime, now: datetime
+    ) -> datetime | None:
+        """When silence began, given the last report at `previous` and the
+        clock at `now` — or `None` while no heartbeat is yet missed.
+
+        Counted from when the report was *due*, one heartbeat after the last,
+        not from when it was given up on: the first heartbeat interval is not
+        missed until it has passed, and once it has, all of it was silence.
+        """
+        heartbeat = timedelta(minutes=probe.heartbeat_minutes)
+        if now <= previous + heartbeat * self.missed_heartbeat_after:
+            return None
+        return previous + heartbeat
 
     def availability_window(self) -> timedelta:
         return timedelta(days=self.availability_window_days)
