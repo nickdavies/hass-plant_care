@@ -22,6 +22,11 @@ class IssueKind(Enum):
 
     BATTERY_LOW = "battery_low"
     PROBE_SILENT = "probe_silent"
+    """Down right now, for longer than any restart explains."""
+    PROBE_FLAKY = "probe_flaky"
+    """Never down long enough to be silent, but down often enough over the
+    week to have spent its availability budget. Every episode healed on its
+    own, which is exactly why nothing else reported it."""
     PROBE_STUCK = "probe_stuck"
     WATERLOGGED = "waterlogged"
     WATERING_SHORTFALL = "watering_shortfall"

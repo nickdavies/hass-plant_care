@@ -47,9 +47,8 @@ class SourceEntity:
     """An entity id belonging to something else — a zigbee probe, say.
 
     A distinct type from [`Entity`] on purpose: this component reads these and
-    must never invent one. They arrive already resolved, derived by the
-    generator from the device inventory, so nothing here has to guess how
-    zigbee2mqtt named a device.
+    must never invent one. They are written explicitly in the config, so
+    nothing here has to guess how another integration named a device.
     """
 
     entity_id: str
@@ -91,20 +90,30 @@ class Calibrating:
 class Calibrated:
     """Both measured endpoints of a wet/dry cycle, exactly as recorded.
 
-    `fc_tolerance` stays `None` when it was never set. The default is applied at
-    the point of use, so "5 was chosen" and "nobody said" remain distinguishable
-    all the way through.
+    `fc_tolerance` and `waterlogged_budget_pct` stay `None` when never set. The
+    defaults are applied at the point of use, so "5 was chosen" and "nobody
+    said" remain distinguishable all the way through.
     """
 
     field_capacity: float
     dry_point: float
     fc_tolerance: float | None = None
+    waterlogged_budget_pct: float | None = None
+    """Share of the window this pot may sit above field capacity. Per plant
+    because the risk varies with the species."""
 
     def __post_init__(self) -> None:
         if self.field_capacity <= self.dry_point:
             raise ValueError(
-                f"fieldCapacity {self.field_capacity} must be above "
-                f"dryPoint {self.dry_point}: a wetter reading is the higher number"
+                f"field_capacity {self.field_capacity} must be above "
+                f"dry_point {self.dry_point}: a wetter reading is the higher number"
+            )
+        if self.waterlogged_budget_pct is not None and not (
+            0.0 < self.waterlogged_budget_pct <= 100.0
+        ):
+            raise ValueError(
+                f"waterlogged_budget_pct must be in (0, 100], got "
+                f"{self.waterlogged_budget_pct}"
             )
 
     @property
@@ -133,13 +142,10 @@ Calibration = Calibrated | Calibrating
 
 @dataclass(frozen=True)
 class Moisture:
-    """A plant's soil probe, already resolved to entity ids.
+    """A plant's soil probe: its entity ids, and what its model does.
 
-    There is no reference back to the device it came from. The generator names
-    devices by a `{room, name}` path into an inventory this component cannot
-    see, so carrying one here would be an identifier nothing on this side could
-    resolve — and the entity ids already encode the room, the device type and
-    the name.
+    The probe facts arrive already looked up from the `probe_models` table, so
+    nothing downstream needs the table or the model's name.
     """
 
     moisture_entity: SourceEntity
@@ -182,7 +188,7 @@ class CareTask:
 
 @dataclass(frozen=True)
 class Plant:
-    """One plant, as resolved by the generator."""
+    """One plant, with every reference it makes already resolved."""
 
     name: str
     display: str
@@ -205,12 +211,10 @@ class Plant:
     def light_source(self) -> Lit | None:
         """Where this plant's light comes from.
 
-        Derived here rather than read from the document, because it is a fact
-        about `lights` and `lux` and the document already carries both. Sending
+        Derived here rather than read from the config, because it is a fact
+        about `lights` and `lux` and the config already carries both. Writing
         it as well would be a second spelling of something we have, and two
-        spellings can disagree — as they did: the generator's version of this
-        could never produce `GROW`, and nothing noticed, because nothing else
-        had reason to.
+        spellings can disagree.
 
         `None` when nothing knows anything about this plant's light: no fixture
         over it and no sensor on it.

@@ -313,8 +313,8 @@ class LightController:
             kind=IssueKind.AUTOMATION_FROZEN,
             label=f"{self._fixture.name} automation frozen",
             detail=(
-                f"The killswitch for '{self._fixture.name}' in {self._fixture.room} "
-                f"has been on for {hours:.0f} hours, so nothing is scheduling it. "
+                f"The killswitch for '{self._fixture.name}' has been on for "
+                f"{hours:.0f} hours, so nothing is scheduling it. "
                 "Turn it off, or accept that the plants under it are on manual."
             ),
             value=round(hours, 1),

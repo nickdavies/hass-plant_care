@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-from datetime import timedelta
 from typing import TYPE_CHECKING, Any
 
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
@@ -13,7 +12,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.util import dt as dt_util
 
-from .const import ATTR_ITEMS, DOMAIN, SIGNAL_CARE_UPDATED
+from .const import ATTR_ITEMS, DOMAIN, RECOMPUTE_INTERVAL, SIGNAL_CARE_UPDATED
 from .entity import PlantEntity
 from .feed import all_items, plant_items
 from .light_entities import DliTodaySensor, LightOnMinutesSensor, LuxAverageSensor
@@ -23,10 +22,6 @@ from .store import EventLog
 
 if TYPE_CHECKING:
     from . import PlantCareData
-
-# Days-since only changes meaningfully once an hour; polling faster would burn
-# state writes to move a one-decimal number that barely moves.
-RECOMPUTE_INTERVAL = timedelta(minutes=30)
 
 
 async def async_setup_platform(

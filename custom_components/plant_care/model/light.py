@@ -15,6 +15,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import time
 from enum import Enum
+from itertools import pairwise
 
 from .dli import Direction
 
@@ -22,8 +23,8 @@ from .dli import Direction
 class Lit(Enum):
     """Where a plant's light comes from.
 
-    Derived by the generator from which fields the plant has — a lux fixture, a
-    grow light, both — never set by hand, so it cannot disagree with them.
+    Derived from which fields the plant has — a lux fixture, a grow light,
+    both — never set by hand, so it cannot disagree with them.
     """
 
     SUN = "sun"
@@ -64,12 +65,26 @@ def _overlap(start: time, end: time, since: time, until: time) -> int:
 
 @dataclass(frozen=True)
 class FixedWindow:
-    """A plain daily window. Nobody sleeps near this fixture."""
+    """A plain daily window. Nobody sleeps near this fixture.
+
+    `start < end` by construction, which is both the ordering check and the
+    cross-midnight refusal. Midnight-crossing is rejected rather than split
+    because no plant here needs an overnight photoperiod, and a splitter would
+    be untested code carried for a case that does not exist.
+    """
 
     start: time
     end: time
     days: frozenset[Weekday] | None = None
     """`None` means every day."""
+
+    def __post_init__(self) -> None:
+        if self.start >= self.end:
+            raise ValueError(
+                f"window runs from {self.start:%H:%M} to {self.end:%H:%M}: a "
+                "window runs forward through the day, and one crossing midnight "
+                "is not supported"
+            )
 
     def runs_on(self, day: Weekday) -> bool:
         return self.days is None or day in self.days
@@ -107,6 +122,12 @@ class AwakeAwareWindow:
 
     Between `on_even_if_asleep_until` and `on_until`, their sleep closes it.
     Before `on_after`, their being awake opens it early.
+
+    The four bounds run forward by construction: `on_if_awake_after ≤ on_after
+    ≤ on_even_if_asleep_until ≤ on_until`, and the window is non-empty. Four
+    bounds that must be ordered is exactly the kind of thing a separate
+    validation pass gets right once and then forgets when a second
+    construction path appears, so it lives here instead.
     """
 
     on_if_awake_after: time
@@ -115,6 +136,25 @@ class AwakeAwareWindow:
     on_until: time
     presence_entity: str
     days: frozenset[Weekday] | None = None
+
+    def __post_init__(self) -> None:
+        bounds = (
+            ("on_if_awake_after", self.on_if_awake_after),
+            ("on_after", self.on_after),
+            ("on_even_if_asleep_until", self.on_even_if_asleep_until),
+            ("on_until", self.on_until),
+        )
+        for (earlier_name, earlier), (later_name, later) in pairwise(bounds):
+            if earlier > later:
+                raise ValueError(
+                    f"window has {earlier_name} {earlier:%H:%M} after {later_name} "
+                    f"{later:%H:%M}: a window runs forward through the day"
+                )
+        if self.on_if_awake_after == self.on_until:
+            raise ValueError(
+                f"window opens and closes at {self.on_until:%H:%M}: a window "
+                "crossing midnight is not supported"
+            )
 
     def runs_on(self, day: Weekday) -> bool:
         return self.days is None or day in self.days
@@ -169,11 +209,10 @@ class LightFixture:
 
     name: str
     switch_entity: str
-    room: str
     window: LightWindow
     lux_to_ppfd: float | None = None
     """This lamp's spectrum. Absent unless a lux fixture covers a plant under
-    it — the generator requires it at exactly that point."""
+    it — parsing requires it at exactly that point."""
 
     @property
     def is_sleep_sensitive(self) -> bool:

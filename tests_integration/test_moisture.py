@@ -10,10 +10,13 @@ from __future__ import annotations
 
 from datetime import timedelta
 
+import pytest
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import HomeAssistant
+from homeassistant.exceptions import ServiceValidationError
+from homeassistant.util import dt as dt_util
 
-from .conftest import PASSIONFRUIT_RAW, probe_reports
+from .conftest import DOMAIN, PASSIONFRUIT_RAW, probe_reports
 
 SMOOTHED = "sensor.plant_passionfruit_moisture_smoothed"
 RISE = "sensor.plant_passionfruit_moisture_rise"
@@ -179,3 +182,75 @@ class TestNeedsWaterReachesTheFeed:
         assert attrs["refill_threshold"] == 57.13
         assert attrs["field_capacity"] == 79.54
         assert attrs["dry_point"] == 53.18
+
+
+async def record_watering(hass: HomeAssistant, **data) -> None:
+    await hass.services.async_call(DOMAIN, "record_watering", data, blocking=True)
+    await hass.async_block_till_done()
+
+
+class TestRecordWateringService:
+    """The escape hatch for a watering the probe did not see."""
+
+    async def test_clears_the_latch_and_stamps_now(
+        self, integration: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        for _ in range(16):
+            freezer.tick(timedelta(minutes=10))
+            await probe_reports(integration, PASSIONFRUIT_RAW, 55.0)
+        assert integration.states.get(NEEDS_WATER).state == "on"
+
+        await record_watering(integration, plant="passionfruit")
+
+        assert integration.states.get(NEEDS_WATER).state == "off"
+        state = integration.states.get(DAYS_WATERED)
+        assert state.state == "0.0"
+        assert state.attributes["last_watered"] == dt_util.utcnow().isoformat()
+
+    async def test_a_past_time_backfills_history(
+        self, integration: HomeAssistant
+    ) -> None:
+        """The exact moment is exposed, so what was entered can be checked."""
+        when = dt_util.utcnow() - timedelta(days=3)
+        await record_watering(integration, plant="passionfruit", when=when.isoformat())
+
+        state = integration.states.get(DAYS_WATERED)
+        assert state.state == "3.0"
+        assert state.attributes["last_watered"] == when.isoformat()
+
+    async def test_it_survives_a_restart(self, integration: HomeAssistant) -> None:
+        from homeassistant.helpers.storage import Store
+
+        from custom_components.plant_care.store import (
+            STORAGE_KEY,
+            STORAGE_VERSION,
+            EventLog,
+        )
+
+        when = dt_util.utcnow() - timedelta(days=3)
+        await record_watering(integration, plant="passionfruit", when=when.isoformat())
+
+        log = EventLog(Store(integration, STORAGE_VERSION, STORAGE_KEY))
+        await log.async_load()
+        assert log.last_watered("passionfruit") == when
+        assert not log.needs_water("passionfruit")
+
+    async def test_the_future_is_refused(self, integration: HomeAssistant) -> None:
+        later = dt_util.utcnow() + timedelta(hours=1)
+        with pytest.raises(ServiceValidationError, match="future"):
+            await record_watering(
+                integration, plant="passionfruit", when=later.isoformat()
+            )
+
+    async def test_a_plant_without_a_probe_is_refused(
+        self, integration: HomeAssistant
+    ) -> None:
+        """It has a water button; this would be a second source of truth."""
+        with pytest.raises(ServiceValidationError, match="front_step_pot"):
+            await record_watering(integration, plant="front_step_pot")
+
+    async def test_an_unknown_plant_is_refused(
+        self, integration: HomeAssistant
+    ) -> None:
+        with pytest.raises(ServiceValidationError, match="nope"):
+            await record_watering(integration, plant="nope")

@@ -206,7 +206,7 @@ class TestPresenceGating:
 
 
 class TestKillswitch:
-    async def test_it_exists_per_fixture_and_names_its_room(
+    async def test_it_exists_per_fixture_and_names_its_switch(
         self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
     ) -> None:
         await start(hass, freezer, at(12, 0))
@@ -214,7 +214,6 @@ class TestKillswitch:
         state = hass.states.get(STUDY_KILLSWITCH)
         assert state is not None
         assert state.state == STATE_OFF
-        assert state.attributes["room"] == "nick_study"
         assert state.attributes["switch"] == STUDY_SWITCH
 
     async def test_turning_it_on_stamps_the_store_rather_than_leaning_on_last_changed(

@@ -6,6 +6,8 @@ importing the package root, which would be circular.
 
 from __future__ import annotations
 
+from datetime import timedelta
+
 DOMAIN = "plant_care"
 
 SIGNAL_CARE_UPDATED = f"{DOMAIN}_care_updated"
@@ -25,3 +27,21 @@ to an external task system later. Named once so both ends agree.
 
 ATTR_PLANT = "plant"
 ATTR_TASK = "task"
+ATTR_WHEN = "when"
+
+SERVICE_RECORD_WATERING = "record_watering"
+"""Record a watering the probe did not see, or correct the date of one.
+
+Not a button, on purpose: a button on the dashboard would be a second source
+of truth competing with the detector. This is the escape hatch for the two
+cases the detector cannot cover — a watering during a restart, and history
+that predates the component.
+"""
+
+RECOMPUTE_INTERVAL = timedelta(minutes=30)
+"""How often the time-driven quantities are re-read.
+
+Days-since only changes meaningfully once an hour; polling faster would burn
+state writes to move a one-decimal number that barely moves. The feed and the
+notifier share it so they cannot disagree about when a task became overdue.
+"""

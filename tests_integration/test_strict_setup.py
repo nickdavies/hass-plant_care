@@ -1,9 +1,10 @@
 """Setup must fail loudly on a config it does not fully understand.
 
-The document is machine-generated, so anything surprising means this component
-and the generator have diverged. A plant care system that comes up with half its
-plants missing looks like it is working, and the failure surfaces weeks later as
-a plant nobody watered — so refusing to start is the kinder outcome.
+A plant care system that comes up with half its plants missing looks like it is
+working, and the failure surfaces weeks later as a plant nobody watered — so
+refusing to start is the kinder outcome. These go through
+`async_setup_component`, so they also prove the checks run from
+`CONFIG_SCHEMA`, which is what `check_config` sees.
 """
 
 from __future__ import annotations
@@ -45,9 +46,28 @@ class TestRejectsBadConfig:
         assert await _try_setup(hass, copy.deepcopy(TEST_CONFIG))
 
     async def test_an_unknown_key_is_rejected(self, hass: HomeAssistant) -> None:
-        """A key this version does not understand means the generator emitted
-        something newer."""
+        """A typo is an error, not a silently ignored field."""
         assert not await _try_setup(hass, _with_first_plant(lightLevel="bright"))
+
+    async def test_an_unknown_probe_model_is_rejected(
+        self, hass: HomeAssistant
+    ) -> None:
+        assert not await _try_setup(hass, _with_first_moisture(model="nope"))
+
+    async def test_a_detectable_task_on_a_calibrated_plant_is_rejected(
+        self, hass: HomeAssistant
+    ) -> None:
+        """The probe already sees a watering; a reminder beside it would be a
+        second, worse source of truth."""
+        assert not await _try_setup(
+            hass,
+            _with_first_plant(
+                care=[
+                    {"task": "feed", "every_days": 14},
+                    {"task": "water", "every_days": 4},
+                ]
+            ),
+        )
 
     async def test_a_half_written_calibration_is_rejected(
         self, hass: HomeAssistant
@@ -77,17 +97,7 @@ class TestRejectsBadConfig:
         self, hass: HomeAssistant
     ) -> None:
         assert not await _try_setup(
-            hass,
-            _with_first_plant(
-                care=[
-                    {
-                        "task": "feed",
-                        "display": "Feed",
-                        "icon": "mdi:nutrition",
-                        "every_days": 0,
-                    }
-                ]
-            ),
+            hass, _with_first_plant(care=[{"task": "feed", "every_days": 0}])
         )
 
     async def test_duplicate_plant_names_are_rejected(
@@ -100,16 +110,14 @@ class TestRejectsBadConfig:
         assert not await _try_setup(hass, config)
 
 
-class TestAbsentMeansCalibrating:
-    """The one contract this component and the generator must agree on."""
-
+class TestCalibratingIsExplicit:
     async def test_a_calibrating_plant_sets_up_and_is_monitored(
         self, hass: HomeAssistant
     ) -> None:
-        """No calibration block is valid, not an error — it means the plant can
-        be monitored but not judged."""
+        """`calibration: calibrating` is valid, not an error — it means the plant
+        can be monitored but not judged."""
         config = copy.deepcopy(TEST_CONFIG)
-        assert "calibration" not in config[DOMAIN]["plants"][1]["moisture"]
+        assert config[DOMAIN]["plants"][1]["moisture"]["calibration"] == "calibrating"
         assert await _try_setup(hass, config)
         assert hass.states.get("button.plant_monstera_pest_check_done") is not None
 
@@ -122,13 +130,11 @@ class TestAbsentMeansCalibrating:
         assert await _try_setup(hass, config)
 
 
-class TestTheEmptyDocument:
-    """`plants: []` is what hass-configs' CI writes in place of the generated
-    document, so this exact shape has to set up cleanly.
+class TestTheEmptyConfig:
+    """`plants: []` has to set up cleanly.
 
-    It is also the first thing the cluster sees: the ConfigMap exists before any
-    plant is in it. Falling over on an empty list would turn "nothing configured
-    yet" into a Home Assistant that will not start.
+    Falling over on an empty list would turn "nothing configured yet" into a
+    Home Assistant that will not start.
     """
 
     async def test_it_sets_up(self, hass: HomeAssistant) -> None:

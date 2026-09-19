@@ -1,10 +1,8 @@
 """Every entity id this component creates.
 
-One module so the names exist in exactly one place. The previous attempt at this
-system built ids inline with `f"plant_{slug}_state"` scattered across the
-generator, which meant the same string was written from memory in several files
-and nothing would catch a mismatch between the thing that created an entity and
-the thing that read it.
+One module so the names exist in exactly one place. An id built inline with an
+f-string in several files is written from memory each time, and nothing catches
+a mismatch between the thing that creates an entity and the thing that reads it.
 
 Here a caller asks for `attention(plant)` and cannot spell it wrong.
 """
@@ -75,8 +73,8 @@ def care_due(plant: Plant, task: CareTask) -> Entity:
 
 
 def care_done(plant: Plant, task: CareTask) -> Entity:
-    """The button. Exists only for tasks nothing can auto-detect — which the
-    generator has already enforced by refusing to schedule a detectable task."""
+    """The button. Exists only for tasks nothing can auto-detect — which
+    parsing has already enforced by refusing to schedule a detectable task."""
     return Entity(Domain.BUTTON, _name(plant, f"{task.task}_done"))
 
 
