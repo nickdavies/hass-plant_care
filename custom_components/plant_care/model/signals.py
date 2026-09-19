@@ -229,13 +229,13 @@ class MoistureMonitor:
         self._window.add(Reading(when, value))
         self._last = Reading(when, value)
 
-        # A gap longer than one heartbeat is silence, known only now that the
-        # probe has spoken again. The first heartbeat interval is not missed
-        # until it has passed, so only the excess counts.
+        # A missed heartbeat is silence, known only now that the probe has
+        # spoken again. The policy decides how late a report may be before the
+        # heartbeat counts as missed, and from when the silence is counted.
         if previous is not None:
-            expected = previous.when + timedelta(minutes=self.probe.heartbeat_minutes)
-            if when > expected:
-                self._silence.add(Interval(expected, when))
+            silent_from = self.policy.silence_from(self.probe, previous.when, when)
+            if silent_from is not None:
+                self._silence.add(Interval(silent_from, when))
                 self._dirty = True
 
         # "The value has not moved" needs the last time it actually moved, which
@@ -376,6 +376,12 @@ class MoistureMonitor:
         dirty, self._dirty = self._dirty, False
         return dirty
 
+    def _open_silence(self, now: datetime) -> datetime | None:
+        """When the stretch since the last report became silence, if it has."""
+        if self._last is None:
+            return None
+        return self.policy.silence_from(self.probe, self._last.when, now)
+
     def health(self, now: datetime) -> list[HealthIssue]:
         """Faults that would otherwise read as healthy soil.
 
@@ -419,24 +425,32 @@ class MoistureMonitor:
             return issues
 
         # The slow burn: not down now, but down often. The stretch since the
-        # last report is still open and counts too, past its heartbeat.
-        open_since = None
-        if self._last is not None:
-            open_since = self._last.when + timedelta(
-                minutes=self.probe.heartbeat_minutes
-            )
+        # last report is still open and counts too, once its heartbeat is
+        # missed.
+        open_since = self._open_silence(now)
         window = self.policy.availability_window()
         rate = self._silence.burn_rate(now, window, open_since)
         if rate >= self.policy.availability_slow_burn_rate:
+            stretches = self._silence.stretches(now, window, open_since)
             down = self._silence.accrued(now, window, open_since)
+            longest = max(i.end - i.start for i in stretches)
+            # How the budget was spent is what says whether to look at the
+            # probe or at `missed_heartbeat_after`: many stretches of about
+            # a heartbeat are a probe that drops the odd report, a few long
+            # ones are real dropouts.
+            shape = (
+                f"across {len(stretches)} "
+                f"{'stretch' if len(stretches) == 1 else 'stretches'}, the "
+                f"longest {longest.total_seconds() / 60:.0f} minutes"
+            )
             issues.append(
                 HealthIssue(
                     kind=IssueKind.PROBE_FLAKY,
                     label="Probe is flaky",
                     detail=(
                         f"Silent for {down.total_seconds() / 60:.0f} minutes in total "
-                        f"over the last {self.policy.availability_window_days} days, "
-                        f"against an allowance of "
+                        f"over the last {self.policy.availability_window_days} days "
+                        f"{shape}, against an allowance of "
                         f"{self._silence.allowance.total_seconds() / 60:.0f} "
                         f"({self.policy.availability_slo_pct:g}% availability). Every "
                         "dropout healed on its own, which is why nothing else "

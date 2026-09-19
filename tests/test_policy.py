@@ -7,7 +7,7 @@ starts being judged differently.
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 
 import pytest
 
@@ -134,3 +134,52 @@ class TestModelInvariants:
     def test_a_zero_heartbeat_probe_cannot_be_constructed(self) -> None:
         with pytest.raises(ValueError, match="positive"):
             ProbeFacts(heartbeat_minutes=0, deadband_pp=1.0)
+
+
+class TestMissedHeartbeat:
+    """A probe's clock is not Home Assistant's. The ThirdReality's ten-minute
+    cycle was measured wandering between 9:59 and 10:02, and charging every
+    late second spent a quarter of the week's allowance on jitter alone. A
+    heartbeat is missed after a multiple of it, 1.5 by default."""
+
+    T0 = datetime(2026, 9, 18, 8, 0, tzinfo=UTC)
+
+    def test_a_report_a_little_late_is_the_same_heartbeat(self) -> None:
+        late = self.T0 + timedelta(minutes=10, seconds=2)
+        assert DEFAULT_POLICY.silence_from(THIRD_REALITY_GEN2, self.T0, late) is None
+
+    def test_half_a_heartbeat_late_is_still_that_heartbeat(self) -> None:
+        late = self.T0 + timedelta(minutes=15)
+        assert DEFAULT_POLICY.silence_from(THIRD_REALITY_GEN2, self.T0, late) is None
+
+    def test_later_than_that_the_heartbeat_was_missed(self) -> None:
+        """Counted from when the report was due, not from when it was given up
+        on: once the tolerance has passed, all of the excess was silence."""
+        late = self.T0 + timedelta(minutes=15, seconds=1)
+        assert DEFAULT_POLICY.silence_from(
+            THIRD_REALITY_GEN2, self.T0, late
+        ) == self.T0 + timedelta(minutes=10)
+
+    def test_the_tolerance_scales_with_the_heartbeat(self) -> None:
+        slow = ProbeFacts(heartbeat_minutes=60, deadband_pp=1.0)
+        assert (
+            DEFAULT_POLICY.silence_from(slow, self.T0, self.T0 + timedelta(minutes=89))
+            is None
+        )
+        assert DEFAULT_POLICY.silence_from(
+            slow, self.T0, self.T0 + timedelta(minutes=91)
+        ) == self.T0 + timedelta(hours=1)
+
+    def test_the_multiple_is_policy(self) -> None:
+        """Tuned up, a single missed report is forgiven and the second is
+        not; the silence still runs from when the first was due."""
+        lenient = Policy(missed_heartbeat_after=2.5)
+        assert (
+            lenient.silence_from(
+                THIRD_REALITY_GEN2, self.T0, self.T0 + timedelta(minutes=20)
+            )
+            is None
+        )
+        assert lenient.silence_from(
+            THIRD_REALITY_GEN2, self.T0, self.T0 + timedelta(minutes=30)
+        ) == self.T0 + timedelta(minutes=10)

@@ -98,22 +98,32 @@ class TimeBudget:
 
     # ---- Reading out ---------------------------------------------------
 
-    def accrued(
+    def stretches(
         self, now: datetime, over: timedelta, open_since: datetime | None = None
-    ) -> timedelta:
-        """Bad time inside the last `over`, ending at `now`.
+    ) -> list[Interval]:
+        """Every bad stretch inside the last `over`, clipped to it, in order.
 
         `open_since` is a stretch still running at `now` that this object was
         not told about through `mark` — see the class docstring.
         """
         since = now - over
-        total = sum(
-            (interval.overlap(since, now) for interval in self._closed), timedelta(0)
-        )
+        out: list[Interval] = []
+        for interval in self._closed:
+            if interval.overlap(since, now) > timedelta(0):
+                out.append(Interval(max(interval.start, since), min(interval.end, now)))
         for start in (self._open_since, open_since):
             if start is not None and start < now:
-                total += Interval(start, now).overlap(since, now)
-        return total
+                out.append(Interval(max(start, since), now))
+        return sorted(out, key=lambda interval: interval.start)
+
+    def accrued(
+        self, now: datetime, over: timedelta, open_since: datetime | None = None
+    ) -> timedelta:
+        """Bad time inside the last `over`, ending at `now`."""
+        return sum(
+            (i.end - i.start for i in self.stretches(now, over, open_since)),
+            timedelta(0),
+        )
 
     def burn_rate(
         self, now: datetime, over: timedelta, open_since: datetime | None = None
