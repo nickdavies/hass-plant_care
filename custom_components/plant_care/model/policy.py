@@ -89,19 +89,21 @@ class Policy:
     wedged — none of which look like anything from a threshold's point of view.
     """
 
-    missed_heartbeat_after: float = 1.5
+    missed_heartbeat_after: float = 2.0
     """How many heartbeats may pass without a report before one counts as
-    missed. At a ten-minute heartbeat, 1.5 is fifteen minutes.
+    missed. At a ten-minute heartbeat, 2.0 is twenty minutes: a single
+    dropped report is forgiven, two in a row are not.
 
     A probe's clock is not Home Assistant's. The ThirdReality's ten-minute
     cycle was measured wandering between 9:59 and 10:02, and a report a second
     or two late is the same heartbeat, not a dropout — yet charging every one
     of those seconds spent a quarter of the week's availability allowance on
-    jitter alone. Once a report is judged missed, the silence is counted from
-    when it was due, one heartbeat after the last. Tune this up if the budget
-    is still spent on single missed reports rather than real dropouts; the
-    flaky message says how many stretches there were and how long the longest
-    was, which is what tells the two apart.
+    jitter alone, and 1.5 still charged ten minutes for every single dropped
+    report. Moisture is judged over hours, so a probe that misses one report
+    now and then costs nothing worth hearing about. Once a report is judged
+    missed, the silence is counted from when it was due, one heartbeat after
+    the last. The flaky message says how many stretches there were and how
+    long the longest was, which is what says whether to tune this further.
     """
 
     availability_window_days: int = 7
