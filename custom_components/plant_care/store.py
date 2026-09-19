@@ -68,8 +68,8 @@ dropouts or wet soil that a burn rate is computed over. Persisted because the
 slow burn exists to see across days, and Home Assistant restarts more often
 than that."""
 SECTION_ANNOUNCED = "announced"
-"""Feed items the notifier has already pushed, by key. Persisted so a restart
-does not push everything still outstanding a second time."""
+"""Feed items the notifier has already pushed, per notify action. Persisted so
+a restart does not push everything still outstanding a second time."""
 
 FLAG_NEEDS_WATER = "needs_water"
 
@@ -100,7 +100,7 @@ class EventLog:
         self._flags: dict[str, bool] = {}
         self._dli: dict[str, dict[date, float]] = {}
         self._intervals: dict[str, list[tuple[datetime, datetime]]] = {}
-        self._announced: set[str] = set()
+        self._announced: dict[str, set[str]] = {}
 
     async def async_load(self) -> None:
         raw: Mapping[str, Any] | None = await self._store.async_load()
@@ -151,9 +151,18 @@ class EventLog:
                     )
             self._intervals[key] = restored
 
-        self._announced = {
-            key for key in raw.get(SECTION_ANNOUNCED, []) if isinstance(key, str)
-        }
+        announced = raw.get(SECTION_ANNOUNCED, {})
+        if isinstance(announced, Mapping):
+            for action, keys in announced.items():
+                if isinstance(action, str) and isinstance(keys, list):
+                    self._announced[action] = {k for k in keys if isinstance(k, str)}
+        elif announced:
+            # The flat list from before per-owner routing: nothing says which
+            # phone it went to, so one repeat beats a guess.
+            _LOGGER.warning(
+                "plant_care: discarding the announced set written before per-owner "
+                "routing; anything still outstanding will be pushed once more"
+            )
 
     async def _async_save(self) -> None:
         await self._store.async_save(
@@ -170,7 +179,11 @@ class EventLog:
                     key: [[start.isoformat(), end.isoformat()] for start, end in pairs]
                     for key, pairs in self._intervals.items()
                 },
-                SECTION_ANNOUNCED: sorted(self._announced),
+                SECTION_ANNOUNCED: {
+                    action: sorted(keys)
+                    for action, keys in self._announced.items()
+                    if keys
+                },
             }
         )
 
@@ -287,10 +300,10 @@ class EventLog:
 
     # ---- The notifier's memory -----------------------------------------
 
-    async def async_set_announced(self, keys: Iterable[str]) -> None:
-        """Replace the set of feed items already pushed."""
-        self._announced = set(keys)
+    async def async_set_announced(self, announced: Mapping[str, Iterable[str]]) -> None:
+        """Replace what has been pushed, per notify action."""
+        self._announced = {action: set(keys) for action, keys in announced.items()}
         await self._async_save()
 
-    def announced(self) -> set[str]:
-        return set(self._announced)
+    def announced(self) -> dict[str, set[str]]:
+        return {action: set(keys) for action, keys in self._announced.items()}
