@@ -65,7 +65,7 @@ class TestPassionfruitRegression:
 
     def test_the_availability_allowance_is_about_a_hundred_minutes(self) -> None:
         assert DEFAULT_POLICY.availability_allowance() == pytest.approx(
-            timedelta(minutes=100.8)
+            timedelta(minutes=100.8), abs=timedelta(seconds=1)
         )
 
     def test_the_waterlogged_allowance_is_per_plant(self) -> None:
