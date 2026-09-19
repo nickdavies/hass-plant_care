@@ -1,11 +1,14 @@
 """The generated Plants dashboard.
 
-Built from the plant list, so adding a plant needs no dashboard edit. Leads with
-the outstanding feed, so opening it answers "what needs me" before showing any
-individual plant.
+Built from the plant list, so adding a plant needs no dashboard edit. One tab
+for everything, then one per person. Every tab leads with its outstanding feed,
+so opening it answers "what needs me" before showing any individual plant.
 """
 
 from __future__ import annotations
+
+from collections.abc import Sequence
+from string import Template
 
 from ..lovelace import (
     DBT,
@@ -22,15 +25,16 @@ from ..lovelace import (
     View,
     divider,
 )
-from ..model import Calibrated, LightFixture, Plant, PlantCareConfig, naming
+from ..model import Calibrated, Entity, LightFixture, Plant, PlantCareConfig, naming
 
 # Items come from several sources with different shapes — a care task carries
 # days and an interval, a fault carries a remedy, a frozen killswitch carries no
 # plant at all — so every field but `label` is tested before it is rendered.
 # Anything else and one new item kind turns the whole card into an error.
-OVERVIEW = """## Needs attention
+# A `Template` rather than `str.format`, because the body is Jinja.
+OVERVIEW = Template("""## Needs attention
 
-{% set items = state_attr('sensor.plant_outstanding', 'items') or [] %}
+{% set items = state_attr('$entity', 'items') or [] %}
 {% if items | count == 0 %}
 Nothing outstanding.
 {% else %}
@@ -42,7 +46,14 @@ Nothing outstanding.
   {{ item.detail }}
 {%- endif %}
 {% endfor %}
-{% endif %}"""
+{% endif %}""")
+
+
+def overview(entity: Entity) -> str:
+    return OVERVIEW.substitute(entity=entity.full)
+
+
+NOTHING_YET = "### No plants are yours yet"
 
 CALIBRATING = """### {display} — calibrating
 
@@ -277,11 +288,45 @@ class PlantsDashboard(GeneratedDashboard):
 
         return VerticalStackCard(cards=cards)
 
-    async def render(self) -> DBT:
-        cards: list[Renderable] = [MarkdownCard(OVERVIEW)]
-        cards.extend(self._plant_card(plant) for plant in self._plants)
-        cards.extend(self._fixture_card(fixture) for fixture in self._config.lights)
+    def _view(
+        self,
+        title: str,
+        path: str,
+        icon: str,
+        feed: Entity,
+        plants: Sequence[Plant],
+        fixtures: Sequence[LightFixture],
+    ) -> View:
+        cards: list[Renderable] = [MarkdownCard(overview(feed))]
+        if plants:
+            cards.extend(self._plant_card(plant) for plant in plants)
+        else:
+            cards.append(MarkdownCard(NOTHING_YET))
+        cards.extend(self._fixture_card(fixture) for fixture in fixtures)
+        return View(
+            title=title, path=path, icon=icon, cards=[VerticalStackCard(cards=cards)]
+        )
 
-        return Dashboard(
-            [View(title=self.title, cards=[VerticalStackCard(cards=cards)])]
-        ).render()
+    async def render(self) -> DBT:
+        views = [
+            self._view(
+                "All",
+                "all",
+                "mdi:sprout",
+                naming.outstanding(),
+                self._plants,
+                self._config.lights,
+            )
+        ]
+        views.extend(
+            self._view(
+                person.replace("_", " ").title(),
+                person,
+                "mdi:account",
+                naming.person_outstanding(person),
+                self._config.plants_for(person),
+                self._config.fixtures_for_person(person),
+            )
+            for person in self._config.people()
+        )
+        return Dashboard(views).render()

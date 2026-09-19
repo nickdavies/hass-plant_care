@@ -14,9 +14,9 @@ from homeassistant.util import dt as dt_util
 
 from .const import ATTR_ITEMS, DOMAIN, RECOMPUTE_INTERVAL, SIGNAL_CARE_UPDATED
 from .entity import PlantEntity
-from .feed import all_items, plant_items
+from .feed import all_items, person_items, plant_items
 from .light_entities import DliTodaySensor, LightOnMinutesSensor, LuxAverageSensor
-from .model import CareTask, Plant, naming
+from .model import CareTask, Entity, Plant, naming
 from .moisture_entities import moisture_sensors
 from .store import EventLog
 
@@ -62,6 +62,9 @@ async def async_setup_platform(
         for controller in data.light_controllers.values()
     )
     entities.append(OutstandingSensor(data))
+    entities.extend(
+        PersonOutstandingSensor(data, person) for person in data.config.people()
+    )
     async_add_entities(entities)
 
 
@@ -168,10 +171,10 @@ class PlantAttentionSensor(_CareDrivenSensor):
         return {ATTR_ITEMS: self._items()}
 
 
-class OutstandingSensor(SensorEntity):
-    """Everything outstanding, across every plant. The integration point.
+class _FeedSensor(SensorEntity):
+    """A count of outstanding items with the list as an attribute.
 
-    Not a `PlantEntity`: it belongs to no single plant, so it gets no device.
+    Not a `PlantEntity`: a feed spans plants, so it gets no device.
 
     Built by walking the plants directly rather than by reading the per-plant
     attention sensors' attributes. Reading state would make this depend on the
@@ -188,11 +191,10 @@ class OutstandingSensor(SensorEntity):
     # and would be written into the database on every measurement that moves.
     _unrecorded_attributes = frozenset({ATTR_ITEMS})
 
-    def __init__(self, data: PlantCareData) -> None:
-        entity = naming.outstanding()
+    def __init__(self, data: PlantCareData, entity: Entity, name: str) -> None:
         self.entity_id = entity.full
         self._attr_unique_id = entity.full
-        self._attr_name = "Plants outstanding"
+        self._attr_name = name
         self._data = data
 
     async def async_added_to_hass(self) -> None:
@@ -222,7 +224,7 @@ class OutstandingSensor(SensorEntity):
         self.async_write_ha_state()
 
     def _items(self) -> list[dict[str, Any]]:
-        return all_items(self._data)
+        raise NotImplementedError
 
     @property
     def native_value(self) -> int:
@@ -231,3 +233,28 @@ class OutstandingSensor(SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         return {ATTR_ITEMS: self._items()}
+
+
+class OutstandingSensor(_FeedSensor):
+    """Everything outstanding, across every plant. The integration point."""
+
+    def __init__(self, data: PlantCareData) -> None:
+        super().__init__(data, naming.outstanding(), "Plants outstanding")
+
+    def _items(self) -> list[dict[str, Any]]:
+        return all_items(self._data)
+
+
+class PersonOutstandingSensor(_FeedSensor):
+    """One person's share of the feed: their plants and their groups' plants."""
+
+    def __init__(self, data: PlantCareData, person: str) -> None:
+        super().__init__(
+            data,
+            naming.person_outstanding(person),
+            f"{person.replace('_', ' ').title()}'s plants outstanding",
+        )
+        self._person = person
+
+    def _items(self) -> list[dict[str, Any]]:
+        return person_items(self._data, self._person)

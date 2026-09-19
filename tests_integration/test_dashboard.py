@@ -1,8 +1,9 @@
 """The generated Plants dashboard.
 
-Built from the plant list, so adding a plant needs no dashboard edit. These
-tests exist mostly to catch the case where a card references an entity the
-component never created — which renders as a blank row nobody notices.
+Built from the plant list, so adding a plant needs no dashboard edit. One tab
+for everything and one per person. These tests exist mostly to catch the case
+where a card references an entity the component never created — which renders
+as a blank row nobody notices.
 """
 
 from __future__ import annotations
@@ -11,15 +12,28 @@ from typing import Any
 
 from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import HomeAssistant
+from homeassistant.loader import DATA_CUSTOM_COMPONENTS
+from homeassistant.setup import async_setup_component
+
+from custom_components.plant_care.lovelace import MarkdownCard, View
 
 from .conftest import (
+    DOMAIN,
     SPARE_SWITCH,
     STUDY_KILLSWITCH,
     STUDY_ON_MINUTES,
     STUDY_SWITCH,
+    _ensure_custom_components_path,
     at,
+    mock_phones,
     start,
 )
+
+
+async def _views(hass: HomeAssistant) -> dict[str, dict[str, Any]]:
+    """The rendered tabs, by path."""
+    config = await hass.data["lovelace"].dashboards["plants"].async_load(False)
+    return {view["path"]: view for view in config["views"]}
 
 
 def _entity_ids(node: Any) -> list[str]:
@@ -60,15 +74,91 @@ class TestContent:
         cards = config["views"][0]["cards"][0]["cards"]
         assert cards[0]["type"] == "markdown"
         assert "Needs attention" in cards[0]["content"]
-        assert "sensor.plant_outstanding" in cards[0]["content"]
+        assert "sensor.plant_outstanding'" in cards[0]["content"]
 
     async def test_every_plant_gets_a_card(self, integration: HomeAssistant) -> None:
+        views = await _views(integration)
+        rendered = str(views["all"])
+        for display in ("Passionfruit", "Monstera", "Front step pot"):
+            assert display in rendered
+
+
+class TestPersonTabs:
+    async def test_one_tab_per_person_after_the_shared_one(
+        self, integration: HomeAssistant
+    ) -> None:
+        """People only: a group's members each have a tab."""
         config = (
             await integration.data["lovelace"].dashboards["plants"].async_load(False)
         )
-        rendered = str(config)
-        for display in ("Passionfruit", "Monstera", "Front step pot"):
-            assert display in rendered
+        assert [view["path"] for view in config["views"]] == ["all", "nick", "britta"]
+        assert [view["title"] for view in config["views"]] == ["All", "Nick", "Britta"]
+
+    async def test_a_tab_shows_owned_and_group_plants_only(
+        self, integration: HomeAssistant
+    ) -> None:
+        views = await _views(integration)
+
+        nick = str(views["nick"])
+        assert "Passionfruit" in nick
+        assert "Monstera" in nick
+        assert "Front step pot" not in nick
+
+        britta = str(views["britta"])
+        assert "Front step pot" in britta
+        assert "Monstera" in britta
+        assert "Passionfruit" not in britta
+
+    async def test_a_tab_leads_with_that_persons_feed(
+        self, integration: HomeAssistant
+    ) -> None:
+        views = await _views(integration)
+        cards = views["nick"]["cards"][0]["cards"]
+        assert cards[0]["type"] == "markdown"
+        assert "sensor.plant_outstanding_nick" in cards[0]["content"]
+
+    async def test_a_tab_only_shows_the_lamps_over_its_plants(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        await start(hass, freezer, at(12, 0))
+        views = await _views(hass)
+
+        assert "Study Shelf lamp" in str(views["nick"])
+        assert "Spare Shelf lamp" not in str(views["nick"])
+        assert "Spare Shelf lamp" in str(views["britta"])
+        assert "Study Shelf lamp" not in str(views["britta"])
+
+    async def test_a_person_with_nothing_is_told_so(self, hass: HomeAssistant) -> None:
+        """Rather than an empty page that looks like a rendering failure."""
+        mock_phones(hass)
+        hass.data.pop(DATA_CUSTOM_COMPONENTS, None)
+        _ensure_custom_components_path()
+        assert await async_setup_component(
+            hass,
+            DOMAIN,
+            {
+                DOMAIN: {
+                    "owners": {"nick": "notify.nick"},
+                    "system_notify": "notify.phones",
+                    "plants": [],
+                }
+            },
+        )
+        views = await _views(hass)
+        assert "No plants are yours yet" in str(views["nick"])
+
+
+class TestViewShape:
+    def test_path_and_icon_render_only_when_given(self) -> None:
+        """The vendored library addition, pinned here so it can be ported."""
+        bare = View(title="T", cards=[MarkdownCard("x")]).render()
+        assert "path" not in bare and "icon" not in bare
+
+        tab = View(
+            title="T", cards=[MarkdownCard("x")], path="nick", icon="mdi:account"
+        ).render()
+        assert tab["path"] == "nick"
+        assert tab["icon"] == "mdi:account"
 
     async def test_a_calibrating_plant_says_so_on_its_card(
         self, integration: HomeAssistant

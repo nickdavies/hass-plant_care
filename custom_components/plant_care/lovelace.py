@@ -7,7 +7,8 @@ changes worth keeping should go back to both until it becomes a shared package
 or repo.
 
 Local additions beyond the original: `MarkdownCard`, `HistoryGraphCard` and
-`Divider`, none of which the lighting component needed.
+`Divider`, none of which the lighting component needed, and `View.path` /
+`View.icon` for tabs. Port those back.
 """
 
 from __future__ import annotations
@@ -36,18 +37,30 @@ class Renderable(ABC):
 
 class View(Renderable):
     def __init__(
-        self, title: str, cards: Sequence[Renderable], panel: bool = True
+        self,
+        title: str,
+        cards: Sequence[Renderable],
+        panel: bool = True,
+        path: str | None = None,
+        icon: str | None = None,
     ) -> None:
         self.title = title
         self.cards = cards
         self.panel = panel
+        self.path = path
+        self.icon = icon
 
     def render(self) -> DBT:
-        return {
+        config: dict[str, Any] = {
             "panel": self.panel,
             "title": self.title,
             "cards": [card.render() for card in self.cards],
         }
+        if self.path is not None:
+            config["path"] = self.path
+        if self.icon is not None:
+            config["icon"] = self.icon
+        return config
 
 
 class VerticalStackCard(Renderable):
