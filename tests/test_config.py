@@ -682,3 +682,23 @@ class TestDli:
         grow_only = {k: v for k, v in LIT_PLANT.items() if k not in ("lux", "dli")}
         (grow,) = load_config(grow_only, lights=[STUDY_LIGHT], lux=[STUDY_LUX]).plants
         assert grow.light_source is Lit.GROW
+
+
+# ---- Notify -------------------------------------------------------------
+
+
+class TestNotify:
+    def test_absent_means_the_feed_is_only_a_sensor(self) -> None:
+        assert load_config(CALIBRATED_PLANT).notify is None
+
+    def test_a_notify_action_is_kept_as_written(self) -> None:
+        assert (
+            load_config(CALIBRATED_PLANT, notify="notify.nick").notify == "notify.nick"
+        )
+
+    @pytest.mark.parametrize(
+        "bad", ["nick", "sensor.nick", "notify.Nick", "notify.", 3]
+    )
+    def test_anything_but_a_notify_action_is_rejected(self, bad: Any) -> None:
+        with pytest.raises(vol.Invalid, match="notify action"):
+            load_config(CALIBRATED_PLANT, notify=bad)

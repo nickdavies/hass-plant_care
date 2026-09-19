@@ -62,6 +62,7 @@ FIELD_DLI_CATEGORIES = "dli_categories"
 FIELD_LIGHTS = "lights"
 FIELD_LUX_SENSORS = "lux_sensors"
 FIELD_PLANTS = "plants"
+FIELD_NOTIFY = "notify"
 
 FIELD_NAME = "name"
 FIELD_DISPLAY = "display"
@@ -154,6 +155,17 @@ def _slug(value: Any) -> str:
 def _entity_id(value: Any) -> str:
     if not isinstance(value, str) or not _ENTITY_ID.match(value):
         raise vol.Invalid(f"expected an entity id like 'sensor.foo', got {value!r}")
+    return value
+
+
+_NOTIFY_ACTION = re.compile(r"^notify\.[a-z0-9_]+$")
+
+
+def _notify_action(value: Any) -> str:
+    """A notify action, `notify.<target>`. Whether the target exists is, like
+    an entity id, something only a running Home Assistant can say."""
+    if not isinstance(value, str) or not _NOTIFY_ACTION.match(value):
+        raise vol.Invalid(f"expected a notify action like 'notify.nick', got {value!r}")
     return value
 
 
@@ -416,6 +428,7 @@ def schema() -> vol.Schema:
             vol.Optional(FIELD_LIGHTS, default=[]): [_light_schema()],
             vol.Optional(FIELD_LUX_SENSORS, default=[]): [_lux_schema()],
             vol.Required(FIELD_PLANTS): [_plant_schema()],
+            vol.Optional(FIELD_NOTIFY): _notify_action,
         }
     )
 
@@ -706,6 +719,9 @@ class PlantCareConfig:
     plants: tuple[Plant, ...]
     lights: tuple[LightFixture, ...] = ()
     lux_sensors: tuple[LuxFixture, ...] = ()
+    notify: str | None = None
+    """The notify action new feed items are pushed to. `None` means the feed
+    is a sensor and nothing more — the dashboard is the only reader."""
 
     def light(self, name: str) -> LightFixture | None:
         return next((f for f in self.lights if f.name == name), None)
@@ -754,6 +770,7 @@ def parse(data: Mapping[str, Any]) -> PlantCareConfig:
         ),
         lights=_parse_lights(data),
         lux_sensors=_parse_lux(data),
+        notify=data.get(FIELD_NOTIFY),
     )
 
     _reject_duplicates([p.name for p in config.plants], "plant")

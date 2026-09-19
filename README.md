@@ -29,6 +29,7 @@ windows, staleness rules, defaults — lives in `model/policy.py`.
 
 ```yaml
 plant_care:
+  notify: notify.nick
   probe_models:
     thirdreality_soil_gen2: { heartbeat_minutes: 10, deadband_pp: 1.0 }
   care_tasks:
@@ -95,6 +96,7 @@ custom_components/plant_care/
 ├── light_control.py    one controller per grow light
 ├── dli.py              one coordinator per measured plant
 ├── feed.py             what "outstanding" means, in one place
+├── notifier.py         pushes each new feed item once, to `notify`
 ├── store.py            durable events, flags, killswitch stamps, DLI history
 └── sensor.py, binary_sensor.py, button.py, switch.py, dashboards/
 ```
@@ -146,6 +148,14 @@ plant and an optional `when`, clears the latch as a detected watering would,
 and the days-since sensor exposes the exact `last_watered` it produced so an
 entry can be checked. A service with a timestamp, not a dashboard button: the
 button is what would become the second source of truth.
+
+**Anything that appears in the feed is pushed once.** A sensor is only read by
+whoever is looking, and a silent probe found three days later has already cost
+the plant. With `notify:` set, each new item goes to that action the moment it
+appears — identified by what it is about, not its text, since days-since ticks
+on every recompute — and never again while it stays. The announced set is
+persisted, because Home Assistant restarts far more often than a plant is
+watered and every restart would otherwise re-send everything outstanding.
 
 **The coordinator subscribes to `state_reported` as well as `state_changed`, and
 reads `last_reported`.** A pot sitting still reports the same number for hours;

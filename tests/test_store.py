@@ -252,6 +252,36 @@ class TestBudgetIntervals:
         assert restarted(store).intervals("monstera", "wet") == [(NOW, NOW + HOUR)]
 
 
+class TestAnnounced:
+    def test_the_set_survives_a_restart(self) -> None:
+        store = FakeStore()
+        log = EventLog(store)
+        run(
+            log.async_set_announced({"passionfruit.battery_low.", "monstera.care.feed"})
+        )
+        assert restarted(store).announced() == {
+            "passionfruit.battery_low.",
+            "monstera.care.feed",
+        }
+
+    def test_a_write_replaces_rather_than_merges(self) -> None:
+        store = FakeStore()
+        log = EventLog(store)
+        run(log.async_set_announced({"a", "b"}))
+        run(log.async_set_announced({"b"}))
+        assert restarted(store).announced() == {"b"}
+
+    def test_the_returned_set_is_a_copy(self) -> None:
+        log = EventLog(FakeStore())
+        run(log.async_set_announced({"a"}))
+        log.announced().add("b")
+        assert log.announced() == {"a"}
+
+    def test_a_non_string_key_is_ignored(self) -> None:
+        store = FakeStore({"announced": ["a", 3, None]})
+        assert restarted(store).announced() == {"a"}
+
+
 class TestCorruption:
     """One bad entry must not take the rest of the log with it.
 
@@ -320,6 +350,7 @@ class TestEverythingTogether:
         run(log.async_set_killswitch_since("study_shelf", NOW))
         run(log.async_record_dli("monstera", date(2026, 9, 14), 6.4, 29))
         run(log.async_record_intervals("monstera", "silence", [(NOW, NOW + HOUR)]))
+        run(log.async_set_announced({"monstera.care.feed"}))
 
         after = restarted(store)
 
@@ -329,6 +360,7 @@ class TestEverythingTogether:
         assert after.killswitch_since("study_shelf") == NOW
         assert after.dli_history("monstera") == {date(2026, 9, 14): 6.4}
         assert after.intervals("monstera", "silence") == [(NOW, NOW + HOUR)]
+        assert after.announced() == {"monstera.care.feed"}
 
     def test_the_stored_shape_is_json_safe(self) -> None:
         """`Store` serialises to JSON, so a `date` or `datetime` key reaching it
@@ -342,6 +374,7 @@ class TestEverythingTogether:
         run(log.async_set_killswitch_since("study_shelf", NOW))
         run(log.async_record_dli("monstera", date(2026, 9, 14), 6.4, 29))
         run(log.async_record_intervals("monstera", "silence", [(NOW, NOW + HOUR)]))
+        run(log.async_set_announced({"monstera.care.feed"}))
 
         json.dumps(store.data)  # raises if anything in there is not JSON
 

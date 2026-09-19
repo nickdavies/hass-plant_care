@@ -103,6 +103,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     from .dli import DliCoordinator
     from .light_control import LightController
     from .moisture import MoistureCoordinator
+    from .notifier import FeedNotifier
 
     domain_config: Mapping[str, Any] | None = config.get(DOMAIN)
     if domain_config is None:
@@ -163,6 +164,9 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         dli_coordinators=dli_coordinators,
     )
     hass.data[DOMAIN] = data
+
+    if parsed.notify is not None:
+        await FeedNotifier(hass, data, parsed.notify).async_start()
 
     async def record_watering(call: ServiceCall) -> None:
         plant = call.data[ATTR_PLANT]

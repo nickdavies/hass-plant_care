@@ -17,7 +17,7 @@ unrecorded event reads as, how days-since is computed — is unit testable. The
 from __future__ import annotations
 
 import logging
-from collections.abc import Mapping
+from collections.abc import Iterable, Mapping
 from datetime import date, datetime
 from enum import Enum
 from typing import Any, Protocol
@@ -67,6 +67,9 @@ SECTION_INTERVALS = "intervals"
 dropouts or wet soil that a burn rate is computed over. Persisted because the
 slow burn exists to see across days, and Home Assistant restarts more often
 than that."""
+SECTION_ANNOUNCED = "announced"
+"""Feed items the notifier has already pushed, by key. Persisted so a restart
+does not push everything still outstanding a second time."""
 
 FLAG_NEEDS_WATER = "needs_water"
 
@@ -97,6 +100,7 @@ class EventLog:
         self._flags: dict[str, bool] = {}
         self._dli: dict[str, dict[date, float]] = {}
         self._intervals: dict[str, list[tuple[datetime, datetime]]] = {}
+        self._announced: set[str] = set()
 
     async def async_load(self) -> None:
         raw: Mapping[str, Any] | None = await self._store.async_load()
@@ -147,6 +151,10 @@ class EventLog:
                     )
             self._intervals[key] = restored
 
+        self._announced = {
+            key for key in raw.get(SECTION_ANNOUNCED, []) if isinstance(key, str)
+        }
+
     async def _async_save(self) -> None:
         await self._store.async_save(
             {
@@ -162,6 +170,7 @@ class EventLog:
                     key: [[start.isoformat(), end.isoformat()] for start, end in pairs]
                     for key, pairs in self._intervals.items()
                 },
+                SECTION_ANNOUNCED: sorted(self._announced),
             }
         )
 
@@ -275,3 +284,13 @@ class EventLog:
 
     def intervals(self, plant: str, budget: str) -> list[tuple[datetime, datetime]]:
         return list(self._intervals.get(f"{plant}.{budget}", []))
+
+    # ---- The notifier's memory -----------------------------------------
+
+    async def async_set_announced(self, keys: Iterable[str]) -> None:
+        """Replace the set of feed items already pushed."""
+        self._announced = set(keys)
+        await self._async_save()
+
+    def announced(self) -> set[str]:
+        return set(self._announced)
