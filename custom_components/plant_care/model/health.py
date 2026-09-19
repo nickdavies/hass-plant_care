@@ -66,12 +66,15 @@ class HealthIssue:
     value: float | None = None
 
     def as_item(
-        self, plant: str | None = None, display: str | None = None
+        self,
+        plant: str | None = None,
+        display: str | None = None,
+        owner: str | None = None,
     ) -> dict[str, object]:
         """Feed shape. Plain types only — a consumer should not need to know
         anything about this component to read it.
 
-        Both arguments are optional because not every fault belongs to a plant:
+        The arguments are optional because not every fault belongs to a plant:
         a killswitch somebody left on is a fault of the system, and inventing a
         plant to hang it on would put it in the wrong place on every dashboard
         that groups by plant. Such an item carries `plant: None`, and its label
@@ -80,6 +83,7 @@ class HealthIssue:
         return {
             "plant": plant,
             "name": display if display is not None else self.label,
+            "owner": owner,
             "kind": self.kind.value,
             "label": self.label,
             "detail": self.detail,

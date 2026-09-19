@@ -15,11 +15,14 @@ from typing import Any
 
 import pytest
 from freezegun.api import FrozenDateTimeFactory
-from homeassistant.core import HomeAssistant
+from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.loader import DATA_CUSTOM_COMPONENTS
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import async_fire_time_changed
+from pytest_homeassistant_custom_component.common import (
+    async_fire_time_changed,
+    async_mock_service,
+)
 
 DOMAIN = "plant_care"
 
@@ -39,11 +42,22 @@ TEST_CONFIG: dict[str, Any] = {
             "feed": {"display": "Feed", "icon": "mdi:nutrition"},
             "pest_check": {"display": "Pest check", "icon": "mdi:bug-outline"},
         },
+        "owners": {
+            "nick": "notify.nick",
+            "britta": "notify.britta",
+            "primary": "notify.phones",
+        },
+        "groups": {
+            "primary": ["nick", "britta"],
+            "guests": ["guest_1", "guest_2"],
+        },
+        "system_notify": "notify.phones",
         "plants": [
             {
                 "name": "passionfruit",
                 "display": "Passionfruit",
                 "species": "passiflora edulis",
+                "owner": "nick",
                 "moisture": {
                     "model": "thirdreality_soil_gen2",
                     "entities": {
@@ -60,9 +74,10 @@ TEST_CONFIG: dict[str, Any] = {
                 "care": [{"task": "feed", "every_days": 14}],
             },
             {
-                # Calibrating: monitored, but no threshold exists.
+                # Calibrating: monitored, but no threshold exists. Shared.
                 "name": "monstera",
                 "display": "Monstera",
+                "owner": "primary",
                 "moisture": {
                     "model": "thirdreality_soil_gen2",
                     "entities": {
@@ -76,6 +91,7 @@ TEST_CONFIG: dict[str, Any] = {
                 # No sensors at all — an outdoor pot. A first-class case.
                 "name": "front_step_pot",
                 "display": "Front step pot",
+                "owner": "britta",
                 "care": [{"task": "water", "every_days": 4}],
             },
         ],
@@ -98,6 +114,8 @@ MONSTERA_PEST_DONE = "button.plant_monstera_pest_check_done"
 POT_WATER_DONE = "button.plant_front_step_pot_water_done"
 
 OUTSTANDING = "sensor.plant_outstanding"
+NICK_OUTSTANDING = "sensor.plant_outstanding_nick"
+BRITTA_OUTSTANDING = "sensor.plant_outstanding_britta"
 
 # Probe entities the component reads but never creates. In reality these come
 # from zigbee2mqtt via MQTT discovery.
@@ -143,6 +161,8 @@ MONSTERA_DLI = "sensor.plant_monstera_dli_today"
 LIGHT_CONFIG: dict[str, Any] = {
     DOMAIN: {
         "dli_categories": {"foliage_tropical": {"low": 4.0, "high": 9.0}},
+        "owners": {"nick": "notify.nick", "britta": "notify.britta"},
+        "system_notify": "notify.phones",
         "lights": [
             {
                 "name": "study_shelf",
@@ -177,6 +197,7 @@ LIGHT_CONFIG: dict[str, Any] = {
                 # Measured and lit: the full DLI path.
                 "name": "monstera",
                 "display": "Monstera",
+                "owner": "nick",
                 "lights": ["study_shelf"],
                 "lux": "study_shelf",
                 "dli": {
@@ -190,16 +211,26 @@ LIGHT_CONFIG: dict[str, Any] = {
                 # Lit but unmeasured: on-time is the only evidence there is.
                 "name": "ficus_alii",
                 "display": "Ficus alii",
+                "owner": "nick",
                 "lights": ["study_shelf"],
             },
             {
                 "name": "spare_fern",
                 "display": "Spare fern",
+                "owner": "britta",
                 "lights": ["spare_shelf"],
             },
         ],
     }
 }
+
+
+NOTIFY_ACTIONS = ("nick", "britta", "phones")
+
+
+def mock_phones(hass: HomeAssistant) -> dict[str, list[ServiceCall]]:
+    """Every notify action the fixture configs name, recording."""
+    return {name: async_mock_service(hass, "notify", name) for name in NOTIFY_ACTIONS}
 
 
 def _ensure_custom_components_path() -> None:
@@ -225,6 +256,7 @@ async def integration(hass: HomeAssistant) -> HomeAssistant:
     hass.states.async_set(PASSIONFRUIT_RAW, "60.0")
     hass.states.async_set(PASSIONFRUIT_BATTERY, "85")
     hass.states.async_set(MONSTERA_RAW, "50.0")
+    mock_phones(hass)
 
     hass.data.pop(DATA_CUSTOM_COMPONENTS, None)
     _ensure_custom_components_path()
@@ -306,6 +338,8 @@ async def setup_lights(
     ):
         if hass.states.get(entity_id) is None:
             hass.states.async_set(entity_id, default)
+    if not hass.services.has_service("notify", NOTIFY_ACTIONS[0]):
+        mock_phones(hass)
 
     hass.data.pop(DATA_CUSTOM_COMPONENTS, None)
     _ensure_custom_components_path()
