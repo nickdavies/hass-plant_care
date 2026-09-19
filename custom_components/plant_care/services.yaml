@@ -1,0 +1,21 @@
+record_watering:
+  name: Record a watering
+  description: >-
+    Record a watering the probe did not see, or correct the date of the last
+    one. Clears the plant's needs-water flag exactly as a detected watering
+    would. Only for plants with a moisture probe; a plant without one has a
+    water button.
+  fields:
+    plant:
+      name: Plant
+      description: The plant's name as written in the plant_care config.
+      required: true
+      example: passionfruit
+      selector:
+        text:
+    when:
+      name: When
+      description: When it was watered. Defaults to now. Cannot be in the future.
+      example: "2026-09-15 10:00:00"
+      selector:
+        datetime:

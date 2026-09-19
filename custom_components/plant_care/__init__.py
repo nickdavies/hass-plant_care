@@ -22,12 +22,12 @@ from typing import TYPE_CHECKING, Any
 
 import voluptuous as vol
 
-from .const import DOMAIN
+from .const import ATTR_PLANT, ATTR_WHEN, DOMAIN, SERVICE_RECORD_WATERING
 from .model import DEFAULT_POLICY, Plant, PlantCareConfig, Policy, parse, schema
 from .store import STORAGE_KEY, STORAGE_VERSION, EventLog
 
 if TYPE_CHECKING:
-    from homeassistant.core import HomeAssistant
+    from homeassistant.core import HomeAssistant, ServiceCall
     from homeassistant.helpers.typing import ConfigType
 
     from .dli import DliCoordinator
@@ -93,8 +93,11 @@ class PlantCareData:
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     # Imported here rather than at module scope: see the module docstring.
+    from homeassistant.exceptions import ServiceValidationError
+    from homeassistant.helpers import config_validation as cv
     from homeassistant.helpers import discovery
     from homeassistant.helpers.storage import Store
+    from homeassistant.util import dt as dt_util
 
     from .dashboards import PlantsDashboard
     from .dli import DliCoordinator
@@ -151,13 +154,37 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         await dli.async_start()
         dli_coordinators[plant.name] = dli
 
-    hass.data[DOMAIN] = PlantCareData(
+    data = PlantCareData(
         config=parsed,
         policy=DEFAULT_POLICY,
         event_log=event_log,
         coordinators=coordinators,
         light_controllers=light_controllers,
         dli_coordinators=dli_coordinators,
+    )
+    hass.data[DOMAIN] = data
+
+    async def record_watering(call: ServiceCall) -> None:
+        plant = call.data[ATTR_PLANT]
+        coordinator = coordinators.get(plant)
+        if coordinator is None:
+            raise ServiceValidationError(
+                f"'{plant}' is not a plant with a moisture probe; a plant without "
+                "one records watering through its water button"
+            )
+        now = dt_util.utcnow()
+        when = dt_util.as_utc(call.data.get(ATTR_WHEN) or now)
+        if when > now:
+            raise ServiceValidationError(f"{when.isoformat()} is in the future")
+        await coordinator.async_mark_watered(when)
+
+    hass.services.async_register(
+        DOMAIN,
+        SERVICE_RECORD_WATERING,
+        record_watering,
+        schema=vol.Schema(
+            {vol.Required(ATTR_PLANT): cv.string, vol.Optional(ATTR_WHEN): cv.datetime}
+        ),
     )
 
     _LOGGER.debug(

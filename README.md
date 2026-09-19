@@ -138,6 +138,15 @@ buttons exist only for feeding, pest checks and the like.
 drifting up on its own — a cool night, a probe settling back into the soil — is
 not someone having watered the plant. The asymmetry is the point.
 
+The one hole in that: a watering during the minute Home Assistant is restarting
+is invisible, because the trailing minimum re-seeds from the first reading
+after it and there is no rise left to detect. `plant_care.record_watering`
+exists for that case and for history that predates the component. It takes a
+plant and an optional `when`, clears the latch as a detected watering would,
+and the days-since sensor exposes the exact `last_watered` it produced so an
+entry can be checked. A service with a timestamp, not a dashboard button: the
+button is what would become the second source of truth.
+
 **The coordinator subscribes to `state_reported` as well as `state_changed`, and
 reads `last_reported`.** A pot sitting still reports the same number for hours;
 Home Assistant fires no state *change* for that, and `last_updated` would hand

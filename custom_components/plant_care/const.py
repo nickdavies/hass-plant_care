@@ -25,3 +25,13 @@ to an external task system later. Named once so both ends agree.
 
 ATTR_PLANT = "plant"
 ATTR_TASK = "task"
+ATTR_WHEN = "when"
+
+SERVICE_RECORD_WATERING = "record_watering"
+"""Record a watering the probe did not see, or correct the date of one.
+
+Not a button, on purpose: a button on the dashboard would be a second source
+of truth competing with the detector. This is the escape hatch for the two
+cases the detector cannot cover — a watering during a restart, and history
+that predates the component.
+"""

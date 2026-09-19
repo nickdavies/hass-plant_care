@@ -194,6 +194,28 @@ class MoistureMonitor:
             if now - last_watered < settle:
                 self._settle_due = last_watered + settle
 
+    def mark_watered(self, when: datetime, now: datetime) -> None:
+        """Take somebody's word for a watering the probe did not see.
+
+        The recovery for the one hole in the detector. A watering during the
+        minute Home Assistant is restarting is invisible: the trailing minimum
+        re-seeds from the first reading after it, so there is no rise left to
+        detect, and the latch stays set with nothing able to clear it. This
+        clears it the way a detected watering would, without pretending a
+        reading was seen — the rolling window and the trailing minimum are
+        left alone.
+
+        The settle check is armed only when the watering is recent enough for
+        the hour-after reading to still be ahead; a date from last week has
+        nothing left to check.
+        """
+        self._last_watered = when
+        self._needs_water = False
+        self._below_since = None
+        self._shortfall = None
+        settle = timedelta(minutes=self.policy.shortfall_settle_minutes)
+        self._settle_due = when + settle if now - when < settle else None
+
     # ---- Observing -----------------------------------------------------
 
     def observe(self, when: datetime, value: float) -> bool:

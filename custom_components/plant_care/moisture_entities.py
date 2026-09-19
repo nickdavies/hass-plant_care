@@ -156,6 +156,13 @@ class DaysSinceWateredSensor(_CoordinatorEntity, SensorEntity):
     def native_value(self) -> float | None:
         return self._event_log.days_since_watered(self._plant.name, dt_util.utcnow())
 
+    @property
+    def extra_state_attributes(self) -> dict[str, Any]:
+        """The exact moment, so "3.2 days" can be checked against memory and
+        corrected with `plant_care.record_watering` if it is wrong."""
+        last = self._event_log.last_watered(self._plant.name)
+        return {"last_watered": None if last is None else last.isoformat()}
+
 
 class NeedsWaterBinarySensor(_CoordinatorEntity, BinarySensorEntity):
     """Whether the plant is flagged as needing water.

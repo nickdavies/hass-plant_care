@@ -16,6 +16,7 @@ from custom_components.plant_care.model import (
     Calibrating,
     ProbeFacts,
 )
+from custom_components.plant_care.model.health import IssueKind
 from custom_components.plant_care.model.signals import (
     MoistureMonitor,
     Reading,
@@ -239,3 +240,53 @@ class TestSignals:
         mon = monitor()
         feed(mon, [56.0, 72.0])
         assert mon.last_watered == START + timedelta(minutes=10)
+
+
+class TestMarkWatered:
+    """Somebody's word for a watering the probe did not see."""
+
+    def test_clears_the_latch_without_a_reading(self) -> None:
+        mon = monitor()
+        feed(mon, [56.0] * 14)
+        assert mon.needs_water
+
+        when = START + timedelta(hours=3)
+        mon.mark_watered(when, now=when)
+        assert not mon.needs_water
+        assert mon.last_watered == when
+
+    def test_the_window_is_untouched(self) -> None:
+        """No reading was seen, so none is invented: the smoothed value is
+        still what the probe last said."""
+        mon = monitor()
+        feed(mon, [56.0] * 14)
+        mon.mark_watered(START + timedelta(hours=3), now=START + timedelta(hours=3))
+        assert mon.signals.smoothed == 56.0
+
+    def test_the_confirm_clock_starts_over(self) -> None:
+        """Still dry afterwards is a new dry spell, judged from scratch."""
+        mon = monitor()
+        feed(mon, [56.0] * 14)
+        mon.mark_watered(START + timedelta(hours=3), now=START + timedelta(hours=3))
+        feed(mon, [56.0] * 4, start=START + timedelta(hours=3))
+        assert not mon.needs_water
+        feed(mon, [56.0] * 10, start=START + timedelta(hours=4))
+        assert mon.needs_water
+
+    def test_a_recent_watering_arms_the_settle_check(self) -> None:
+        now = START + timedelta(hours=3)
+        mon = monitor()
+        mon.mark_watered(now - timedelta(minutes=10), now=now)
+        # An hour on, the reading is far short of field capacity minus tolerance.
+        later = now + timedelta(minutes=55)
+        mon.observe(later, 60.0)
+        assert IssueKind.WATERING_SHORTFALL in {i.kind for i in mon.health(later)}
+
+    def test_an_old_watering_does_not(self) -> None:
+        """A date from last week has nothing left to check."""
+        now = START + timedelta(hours=3)
+        mon = monitor()
+        mon.mark_watered(now - timedelta(days=6), now=now)
+        later = now + timedelta(minutes=55)
+        mon.observe(later, 60.0)
+        assert IssueKind.WATERING_SHORTFALL not in {i.kind for i in mon.health(later)}

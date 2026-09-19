@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Callable
+from datetime import datetime
 
 from homeassistant.const import STATE_UNAVAILABLE, STATE_UNKNOWN
 from homeassistant.core import (
@@ -244,4 +245,16 @@ class MoistureCoordinator:
         when = self.monitor.last_watered or dt_util.utcnow()
         await self._event_log.async_record_watering(self._plant.name, when)
         _LOGGER.debug("plant_care: %s watering detected at %s", self._plant.name, when)
+        self._notify()
+
+    async def async_mark_watered(self, when: datetime) -> None:
+        """A watering somebody is telling us about rather than one the probe
+        saw. Recorded and latched exactly as a detected one, so the feed, the
+        days-since sensor and the shortfall check all treat it the same."""
+        self.monitor.mark_watered(when, dt_util.utcnow())
+        await self._event_log.async_record_watering(self._plant.name, when)
+        await self._event_log.async_set_needs_water(self._plant.name, False)
+        _LOGGER.debug(
+            "plant_care: %s watering recorded by hand at %s", self._plant.name, when
+        )
         self._notify()
