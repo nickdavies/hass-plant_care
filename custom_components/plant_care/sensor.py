@@ -52,6 +52,10 @@ async def async_setup_platform(
         if coordinator is not None:
             entities.extend(moisture_sensors(coordinator, data.event_log))
 
+        # Both of these are measurements, so neither waits on an objective. A
+        # plant being watched before anyone has chosen its band still records
+        # its lux and its daily total, which is the evidence that band will be
+        # chosen from.
         dli = data.dli_coordinators.get(plant.name)
         if dli is not None:
             entities.append(DliTodaySensor(dli))

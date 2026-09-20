@@ -151,12 +151,15 @@ SPARE_SWITCH = "switch.spare_outlet_grow_lamp_1"
 PRESENCE = "sensor.person_presence_nick"
 LUX_1 = "sensor.esphome_study_lux_1"
 LUX_2 = "sensor.esphome_study_lux_2"
+SILL_LUX = "sensor.esphome_window_sill_lux"
 
 STUDY_KILLSWITCH = "switch.plant_light_killswitch_study_shelf"
 SPARE_KILLSWITCH = "switch.plant_light_killswitch_spare_shelf"
 STUDY_ON_MINUTES = "sensor.plant_light_study_shelf_on_minutes"
 STUDY_LUX = "sensor.plant_lux_study_shelf"
 MONSTERA_DLI = "sensor.plant_monstera_dli_today"
+SILL_AVERAGE = "sensor.plant_lux_window_sill"
+FERN_DLI = "sensor.plant_window_fern_dli_today"
 
 LIGHT_CONFIG: dict[str, Any] = {
     DOMAIN: {
@@ -193,7 +196,12 @@ LIGHT_CONFIG: dict[str, Any] = {
                 "name": "study_shelf",
                 "entities": [LUX_1, LUX_2],
                 "sun_lux_to_ppfd": 0.0185,
-            }
+            },
+            {
+                "name": "window_sill",
+                "entities": [SILL_LUX],
+                "sun_lux_to_ppfd": 0.0185,
+            },
         ],
         "plants": [
             {
@@ -209,6 +217,14 @@ LIGHT_CONFIG: dict[str, Any] = {
                     "window_days": 28,
                     "budget": 5.0,
                 },
+            },
+            {
+                # Measured but not judged: lux and no objective. Records
+                # everything, asserts nothing about whether it is enough.
+                "name": "window_fern",
+                "display": "Window fern",
+                "owner": "nick",
+                "lux": "window_sill",
             },
             {
                 # Lit but unmeasured: on-time is the only evidence there is.

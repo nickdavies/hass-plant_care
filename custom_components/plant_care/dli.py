@@ -8,6 +8,14 @@ engine reads.
 
 The judgement is all in `model.dli` — bands, budgets, burn rates, what counts as
 certain today. This is the wiring that gets a number to it once a minute.
+
+**Measuring does not require an objective.** A plant with `lux` and no `dli`
+gets everything above — the average, the accumulation, the durable history —
+and only the judging is skipped. That is the honest order of operations: you
+cannot pick a defensible band for a plant until you have watched what it
+actually receives for a fortnight, and a component that refused to record until
+you had already decided would make that impossible. The faults it can still
+report without an objective are the hardware ones, which are true either way.
 """
 
 from __future__ import annotations
@@ -22,9 +30,11 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.util import dt as dt_util
 
 from .model import (
+    DEFAULT_WINDOW_DAYS,
     DailyDli,
     Direction,
     DliAccumulator,
+    DliObjective,
     LightFixture,
     LuxFixture,
     Plant,
@@ -71,9 +81,6 @@ class DliCoordinator:
         fixtures: Sequence[LightFixture],
         event_log: EventLog,
     ) -> None:
-        if plant.dli is None:
-            raise ValueError(f"plant '{plant.name}' has no dli objective")
-
         self._hass = hass
         self._plant = plant
         self._lux = lux
@@ -96,6 +103,11 @@ class DliCoordinator:
     @property
     def lux_fixture(self) -> LuxFixture:
         return self._lux
+
+    @property
+    def objective(self) -> DliObjective | None:
+        """`None` while this plant is only being measured, not judged."""
+        return self._objective
 
     @property
     def today(self) -> float:
@@ -215,21 +227,27 @@ class DliCoordinator:
     async def _async_persist(self, day: DailyDli) -> None:
         # One extra day beyond the window so the oldest day in the window still
         # has a predecessor while the rollover is in flight.
+        window = (
+            DEFAULT_WINDOW_DAYS
+            if self._objective is None
+            else self._objective.window_days
+        )
         await self._event_log.async_record_dli(
-            self._plant.name,
-            day.day,
-            day.value,
-            keep_days=self._objective.window_days + 1,
+            self._plant.name, day.day, day.value, keep_days=window + 1
         )
 
     # ---- Judging -------------------------------------------------------
 
     def alerts(self) -> list[HealthIssue]:
-        """Everything wrong with this plant's light, worst first."""
+        """Everything wrong with this plant's light, worst first.
+
+        The silent-sensor check runs with or without an objective: a probe
+        nobody can read is a fault about the hardware, and it is true whether or
+        not anyone has yet decided what this plant's light ought to be. Every
+        check below it compares against a band, so without one there is nothing
+        further to say.
+        """
         now = dt_util.now()
-        history = self.history()
-        band = self._objective.preferred
-        issues: list[HealthIssue] = []
 
         silent = self._lux_silent(now)
         if silent is not None:
@@ -237,11 +255,19 @@ class DliCoordinator:
             # it is the only thing worth saying until it is fixed.
             return [silent]
 
-        critical = self._critical(history)
-        issues.extend(critical)
-        issues.extend(self._today(now, history))
+        objective = self._objective
+        if objective is None:
+            return []
 
-        for alert in evaluate(history, self._objective, now.date()):
+        history = self.history()
+        band = objective.preferred
+        issues: list[HealthIssue] = []
+
+        critical = self._critical(objective, history)
+        issues.extend(critical)
+        issues.extend(self._today(objective, now, history))
+
+        for alert in evaluate(history, objective, now.date()):
             if alert.kind is BurnKind.FAST:
                 continue  # already covered by `_critical`
             if critical:
@@ -259,14 +285,14 @@ class DliCoordinator:
                         f"Over the last {alert.days} days this plant has run "
                         f"{alert.deviation:.1f} mol/m² outside its {band.low:g}–"
                         f"{band.high:g} band, which is {alert.rate:.1f}× the pace its "
-                        f"{self._objective.budget:g} mol/m² budget allows. Adjust the "
+                        f"{objective.budget:g} mol/m² budget allows. Adjust the "
                         "schedule or the position; nothing is dying this week."
                     ),
                     value=alert.rate,
                 )
             )
 
-        spread = unstable(history, self._objective, now.date())
+        spread = unstable(history, objective, now.date())
         if spread is not None:
             issues.append(
                 HealthIssue(
@@ -274,7 +300,7 @@ class DliCoordinator:
                     label="Light swinging wildly",
                     detail=(
                         f"Daily light has ranged over {spread:.1f} mol/m² in the last "
-                        f"{self._objective.window_days} days. The average may look "
+                        f"{objective.window_days} days. The average may look "
                         "fine; find what is changing — a blind, a moved pot, a lamp "
                         "that is not switching reliably."
                     ),
@@ -304,7 +330,9 @@ class DliCoordinator:
             ),
         )
 
-    def _critical(self, history: list[DailyDli]) -> list[HealthIssue]:
+    def _critical(
+        self, objective: DliObjective, history: list[DailyDli]
+    ) -> list[HealthIssue]:
         """Fast burn, or a completed day outside survival.
 
         Either alone is enough. The survival check is not redundant: a plant
@@ -320,22 +348,22 @@ class DliCoordinator:
         fast = next(
             (
                 alert
-                for alert in evaluate(history, self._objective, now.date())
+                for alert in evaluate(history, objective, now.date())
                 if alert.kind is BurnKind.FAST
             ),
             None,
         )
-        breached = outside_survival(last.value, self._objective)
+        breached = outside_survival(last.value, objective)
         if fast is None and not breached:
             return []
 
-        band = self._objective.preferred
+        band = objective.preferred
         direction = (
             fast.direction
             if fast is not None
             else (Direction.UNDER if last.value < band.low else Direction.OVER)
         )
-        survival = self._objective.survival
+        survival = objective.survival
         detail = (
             f"{last.day} delivered {last.value:.1f} mol/m² against a "
             f"{band.low:g}–{band.high:g} band."
@@ -360,14 +388,14 @@ class DliCoordinator:
             )
         ]
 
-    def _today(self, now: datetime, history: list[DailyDli]) -> list[HealthIssue]:
-        certainty = today_certainty(
-            self._accumulator.total, now, history, self._objective
-        )
+    def _today(
+        self, objective: DliObjective, now: datetime, history: list[DailyDli]
+    ) -> list[HealthIssue]:
+        certainty = today_certainty(self._accumulator.total, now, history, objective)
         if certainty is None:
             return []
 
-        band = self._objective.preferred
+        band = objective.preferred
         if certainty is Direction.OVER:
             return [
                 HealthIssue(

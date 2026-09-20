@@ -116,6 +116,11 @@ class DliTodaySensor(PlantEntity, SensorEntity):
     Deliberately `MEASUREMENT` rather than `TOTAL_INCREASING`: it resets to zero
     at local midnight by design, and a total-increasing sensor that drops is
     read by the statistics engine as a meter replacement.
+
+    Exists whether or not the plant has an objective — the state is a measured
+    quantity either way, and the band attributes simply drop out when there is
+    no band. `history` is there in both cases, and is what you read to choose
+    one.
     """
 
     _attr_native_unit_of_measurement = MOL_PER_SQUARE_METRE
@@ -146,8 +151,13 @@ class DliTodaySensor(PlantEntity, SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        objective = self._coordinator.plant.dli
-        assert objective is not None  # a coordinator cannot exist without one
+        history = {
+            day.day.isoformat(): day.value for day in self._coordinator.history()
+        }
+        objective = self._coordinator.objective
+        if objective is None:
+            return {"history": history}
+
         attributes: dict[str, Any] = {
             "category": objective.category,
             "preferred_low": objective.preferred.low,
@@ -157,9 +167,7 @@ class DliTodaySensor(PlantEntity, SensorEntity):
             # Surfaced so the reason a band differs from its category stays
             # visible months later, rather than looking like a mistake.
             "preferred_overridden": objective.preferred_overridden,
-            "history": {
-                day.day.isoformat(): day.value for day in self._coordinator.history()
-            },
+            "history": history,
         }
         if objective.survival is not None:
             attributes["survival_low"] = objective.survival.low
