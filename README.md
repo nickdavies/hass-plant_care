@@ -252,6 +252,19 @@ because forgetting it is the real failure mode.
 stamps it with the restore time, so a two-day-old killswitch would read as brand
 new on every restart and the 48-hour backstop would never fire.
 
+**On-time survives a restart, and the break in it is filled in.** Config sync
+restarts Home Assistant within a minute of anything landing on `hass-configs`
+main, so an afternoon of editing is several restarts. A counter starting again
+at zero on each one does not just display the wrong number — the comparison
+window restarts with it, so the check goes blind to the whole morning and a bulb
+that died at nine is forgiven by a deploy at four. Nothing but the controller
+commands the switch, so across a short gap the lamp held the state it was last
+recorded in and the gap is credited from it. An outage past
+`MAX_RESTART_GAP_MINUTES` is not guessed at: the day's total is carried on for
+the dashboard, and the comparison reopens from start-up so it only ever judges a
+stretch something was watching. `tracked_minutes` on the sensor is the part of
+the day the attributes are talking about.
+
 **Light is an SLO with a continuous error budget, not a threshold.** The budget
 is cumulative mol/m² of deviation from a *band*, so a day 10% short burns a
 little and a day at zero burns a lot — the distinction a "days outside the band"

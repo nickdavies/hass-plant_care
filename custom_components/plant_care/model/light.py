@@ -283,6 +283,19 @@ redeploy, or a slow outlet. A bulb that is genuinely dead accrues hours, so the
 alert that matters is not the one this number is close to.
 """
 
+MAX_RESTART_GAP_MINUTES = 15
+"""How long a break in the record can be and still be credited to the lamp.
+
+Nothing but the controller commands the switch, so across a restart the lamp
+held whatever state it was last seen in and the break can simply be filled in.
+That stops being true for an outage: a node reboot or a long rollout leaves a
+stretch nobody can account for, and guessing across it would invent on-time.
+
+Lives here rather than beside the controller so the one number it has to stay
+under is visible from it. The credit is an estimate, so it must never be what
+tips the comparison over — `tests/test_light.py` pins the margin.
+"""
+
 
 @dataclass(frozen=True)
 class OnTimeDeviation:
@@ -293,6 +306,8 @@ class OnTimeDeviation:
     minutes: int
     """How far outside the bounds, which is what makes it worth reporting."""
     actual: int
+    """On-time over the stretch the bounds were computed from, which is not
+    necessarily the whole day — see `MAX_RESTART_GAP_MINUTES`."""
     guaranteed: int
     possible: int
 

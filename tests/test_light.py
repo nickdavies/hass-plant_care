@@ -13,6 +13,8 @@ from datetime import time
 import pytest
 
 from custom_components.plant_care.model import (
+    MAX_RESTART_GAP_MINUTES,
+    ON_TIME_TOLERANCE_MINUTES,
     AwakeAwareWindow,
     Direction,
     FixedWindow,
@@ -224,6 +226,17 @@ class TestOnTimeDeviation:
         deviation = on_time_deviation(actual=600, guaranteed=0, possible=0)
         assert deviation is not None
         assert deviation.direction is Direction.OVER
+
+    def test_a_credited_restart_gap_cannot_be_what_trips_the_check(self) -> None:
+        """The two constants, pinned against each other.
+
+        On-time across a restart is filled in from the state the lamp was last
+        seen in, so a credited gap is an estimate and its error is at most the
+        whole gap. Raise the gap towards the tolerance and the estimate becomes
+        able to move a healthy lamp past the bound on its own, which would turn
+        a deploy into an alert. A third leaves room for several in a day.
+        """
+        assert MAX_RESTART_GAP_MINUTES * 3 <= ON_TIME_TOLERANCE_MINUTES
 
 
 class TestPpfdFactor:

@@ -30,9 +30,16 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.start import async_at_started
 from homeassistant.util import dt as dt_util
 
-from .model import LightFixture, OnTimeDeviation, Weekday, is_asleep, on_time_deviation
+from .model import (
+    MAX_RESTART_GAP_MINUTES,
+    LightFixture,
+    OnTimeDeviation,
+    Weekday,
+    is_asleep,
+    on_time_deviation,
+)
 from .model.health import HealthIssue, IssueKind
-from .store import EventLog
+from .store import EventLog, OnTimeRecord
 
 _LOGGER = logging.getLogger(__name__)
 
@@ -41,6 +48,19 @@ SWITCH_DOMAIN = "switch"
 # Window boundaries are minute-resolution, so a minute of latency is the most
 # this adds. Cheap too: a tick compares three times and usually does nothing.
 TICK_INTERVAL = timedelta(minutes=1)
+
+FLUSH_INTERVAL = timedelta(minutes=5)
+"""How often today's on-time is written down.
+
+Not on every sample: the smart plug behind a grow light reports power every few
+seconds, and each report is a state change, so writing on each one would be a
+storage write every few seconds per fixture. Not only at midnight either —
+that is the failure being fixed. Transitions are written as they happen
+regardless, since they are rare and they are what makes the stored on/off flag
+worth trusting.
+"""
+
+MAX_RESTART_GAP = timedelta(minutes=MAX_RESTART_GAP_MINUTES)
 
 FROZEN_AFTER = timedelta(hours=48)
 """How long a killswitch may stay on before it becomes an item of its own.
@@ -65,17 +85,25 @@ class LightController:
         self._listeners: list[Callable[[], None]] = []
         self._killed = False
 
-        # On-time accounting. `_tracking_since` is when today's count started,
-        # which is midnight on an ordinary day and start-up time on the day Home
-        # Assistant restarted. Expectations are computed from that same instant,
-        # so a restart narrows the comparison window rather than reporting the
-        # part of the day nobody was watching as a shortfall. Nothing needs
-        # persisting for that to hold, which is why nothing is.
-        self._day: date | None = None
+        # On-time accounting, kept as two spans over one counter.
+        #
+        # `_on_minutes` is the day, restored across a restart so the dashboard
+        # reports the day rather than the time since the last deploy.
+        #
+        # The comparison against the window has to run over a stretch something
+        # was actually watching, or a lamp would be judged against hours nobody
+        # recorded. That stretch runs from `_tracking_since`, and
+        # `_counted_from` holds the minutes banked before it opened so they can
+        # be taken back off. Ordinarily the two spans are the same and
+        # `_counted_from` is zero; they part only after an outage too long to
+        # account for.
+        self._day: date = dt_util.now().date()
         self._tracking_since = time(0, 0)
         self._on_minutes = 0.0
+        self._counted_from = 0.0
         self._sampled_at: datetime | None = None
         self._was_on = False
+        self._flushed_at = dt_util.now()
 
     @property
     def fixture(self) -> LightFixture:
@@ -87,7 +115,18 @@ class LightController:
 
     @property
     def on_minutes(self) -> int:
+        """Minutes the lamp has been on today. What the sensor reports."""
         return int(self._on_minutes)
+
+    @property
+    def tracked_minutes(self) -> int:
+        """The part of that falling inside the span expectations cover.
+
+        The same number as `on_minutes` unless an outage was too long to
+        credit — in which case judging a whole day's on-time against a window
+        that only opened at teatime would report every lamp as stuck on.
+        """
+        return int(self._on_minutes - self._counted_from)
 
     def async_add_listener(self, listener: Callable[[], None]) -> Callable[[], None]:
         self._listeners.append(listener)
@@ -112,12 +151,7 @@ class LightController:
         reason spelled out in `store.KILLSWITCH_SINCE`.
         """
         self._killed = self._event_log.killswitch_since(self._fixture.name) is not None
-
-        now = dt_util.now()
-        self._day = now.date()
-        self._tracking_since = now.time()
-        self._sampled_at = now
-        self._was_on = self._switch_is_on()
+        self._restore(dt_util.now())
 
         self._unsubs.append(
             async_track_time_interval(self._hass, self._handle_tick, TICK_INTERVAL)
@@ -259,6 +293,49 @@ class LightController:
     # ---- What actually happened ----------------------------------------
 
     @callback
+    def _restore(self, now: datetime) -> None:
+        """Pick today's count up where the last run left it, where that is honest.
+
+        A restart is a break in the record, not in the lamp: nothing but this
+        controller commands the switch, so across a short one the lamp held
+        whatever state it was last seen in, and the break can be filled in from
+        the stored flag. From the *stored* one rather than the state the switch
+        comes back in, because the switch arrives from MQTT discovery some time
+        after this runs — `_handle_started` exists for that reason — so there is
+        nothing there to read yet.
+
+        Beyond `MAX_RESTART_GAP` that reasoning runs out. Nothing here knows
+        what the lamp did during an outage, so the comparison restarts from now
+        and only ever judges a stretch that was watched. The day's total is
+        still carried: it is an undercount by however long the outage was, but
+        the alternative is reporting a lamp that ran all morning as one that
+        never came on, which is the failure this whole record exists to stop.
+        """
+        self._day = now.date()
+        self._tracking_since = now.time()
+        self._on_minutes = 0.0
+        self._counted_from = 0.0
+        self._sampled_at = now
+        self._was_on = self._switch_is_on()
+        self._flushed_at = now
+
+        stored = self._event_log.on_time(self._fixture.name)
+        if stored is None or stored.day != now.date():
+            return
+
+        gap = now - stored.seen
+        self._on_minutes = stored.minutes
+        if timedelta(0) <= gap <= MAX_RESTART_GAP:
+            if stored.on:
+                self._on_minutes += gap.total_seconds() / 60.0
+            self._tracking_since = stored.since
+            self._counted_from = stored.counted_from
+        else:
+            # Includes a gap running backwards, which means the clock moved
+            # under us and the arithmetic is not to be trusted either way.
+            self._counted_from = self._on_minutes
+
+    @callback
     def _sample(self, now: datetime | None = None) -> None:
         """Credit the interval since the last sample, then remember the state.
 
@@ -272,8 +349,10 @@ class LightController:
             self._day = now.date()
             self._tracking_since = time(0, 0)
             self._on_minutes = 0.0
+            self._counted_from = 0.0
             self._sampled_at = now
             self._was_on = self._switch_is_on()
+            self._persist(now)
             return
 
         if self._sampled_at is not None and self._was_on:
@@ -282,7 +361,27 @@ class LightController:
                 self._on_minutes += elapsed
 
         self._sampled_at = now
-        self._was_on = self._switch_is_on()
+        before, self._was_on = self._was_on, self._switch_is_on()
+
+        if before != self._was_on or now - self._flushed_at >= FLUSH_INTERVAL:
+            self._persist(now)
+
+    @callback
+    def _persist(self, now: datetime) -> None:
+        self._flushed_at = now
+        self._hass.async_create_task(
+            self._event_log.async_record_on_time(
+                self._fixture.name,
+                OnTimeRecord(
+                    day=self._day,
+                    minutes=self._on_minutes,
+                    since=self._tracking_since,
+                    counted_from=self._counted_from,
+                    seen=now,
+                    on=self._was_on,
+                ),
+            )
+        )
 
     def expectation(self, now: datetime | None = None) -> tuple[int, int]:
         """Minutes the window guarantees, and the most it could ever allow."""
@@ -296,7 +395,7 @@ class LightController:
 
     def deviation(self, now: datetime | None = None) -> OnTimeDeviation | None:
         guaranteed, possible = self.expectation(now)
-        return on_time_deviation(self.on_minutes, guaranteed, possible)
+        return on_time_deviation(self.tracked_minutes, guaranteed, possible)
 
     def frozen_issue(self, now: datetime | None = None) -> HealthIssue | None:
         """A killswitch left on long enough to have been forgotten."""

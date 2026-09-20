@@ -18,13 +18,14 @@ from datetime import timedelta
 
 import pytest
 from freezegun.api import FrozenDateTimeFactory
+from homeassistant.const import STATE_OFF, STATE_ON
 from homeassistant.core import HomeAssistant
 from homeassistant.helpers.storage import Store
 from homeassistant.util import dt as dt_util
 
 from custom_components.plant_care.dli import DliCoordinator
 from custom_components.plant_care.light_control import LightController
-from custom_components.plant_care.model import DEFAULT_POLICY
+from custom_components.plant_care.model import DEFAULT_POLICY, Direction
 from custom_components.plant_care.moisture import MoistureCoordinator
 from custom_components.plant_care.store import STORAGE_KEY, STORAGE_VERSION, EventLog
 
@@ -152,6 +153,144 @@ class TestKillswitch:
 
         assert not rebuilt["study_shelf"].killed
         assert rebuilt["study_shelf"].frozen_issue() is None
+
+
+class TestOnTime:
+    """The lamp ran all morning; a restart must not say otherwise.
+
+    Config sync restarts Home Assistant within a minute of anything landing on
+    `hass-configs` main, so an afternoon of editing is several restarts. A
+    counter that begins again at zero on each one does not merely display the
+    wrong number: the on-time check compares against a window that starts at
+    the same instant, so it goes blind to the whole morning with it.
+    """
+
+    async def test_todays_on_time_resumes_rather_than_restarting_at_zero(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        hass.states.async_set(STUDY_SWITCH, STATE_ON)
+        await start(hass, freezer, at(9, 0))
+        await tick(hass, freezer, minutes=4 * 60)
+
+        banked = hass.data[DOMAIN].light_controllers["study_shelf"].on_minutes
+        assert banked == pytest.approx(240, abs=1)
+
+        rebuilt = await restart_lights(hass)
+
+        assert rebuilt["study_shelf"].on_minutes == pytest.approx(banked, abs=1)
+
+    async def test_the_restart_itself_is_credited_to_a_lamp_that_was_on(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """Nothing but the controller commands the switch, so a lamp on when
+        Home Assistant went down was on while it was down."""
+        hass.states.async_set(STUDY_SWITCH, STATE_ON)
+        await start(hass, freezer, at(9, 0))
+        await tick(hass, freezer, minutes=60)
+
+        for controller in hass.data[DOMAIN].light_controllers.values():
+            controller.async_stop()
+        freezer.tick(timedelta(minutes=3))
+        rebuilt = await restart_lights(hass)
+
+        assert rebuilt["study_shelf"].on_minutes == pytest.approx(63, abs=1)
+
+    async def test_it_is_not_credited_to_a_lamp_that_was_off(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """The flag comes off the record rather than the switch: the switch
+        arrives from MQTT discovery after the controller does, so at the moment
+        this is decided there is nothing there to read."""
+        hass.states.async_set(STUDY_SWITCH, STATE_OFF)
+        await start(hass, freezer, at(9, 0))
+        await hass.data[DOMAIN].light_controllers["study_shelf"].async_set_killed(True)
+        await tick(hass, freezer, minutes=60)
+
+        freezer.tick(timedelta(minutes=3))
+        rebuilt = await restart_lights(hass)
+
+        assert rebuilt["study_shelf"].on_minutes == 0
+
+    async def test_a_lamp_that_died_before_the_restart_is_still_caught_after_it(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """The failure that made this worth fixing. The outlet says off from
+        nine; a restart at one in the afternoon used to reset the count *and*
+        the window it is compared against, so the four hours the lamp owed
+        vanished and the plants under it went quiet until midnight.
+        """
+        hass.states.async_set(STUDY_SWITCH, STATE_OFF)
+        await start(hass, freezer, at(9, 0))
+        await hass.data[DOMAIN].light_controllers["study_shelf"].async_set_killed(True)
+        await tick(hass, freezer, minutes=4 * 60)
+
+        rebuilt = await restart_lights(hass)
+
+        deviation = rebuilt["study_shelf"].deviation()
+        assert deviation is not None
+        assert deviation.direction is Direction.UNDER
+        assert deviation.minutes == pytest.approx(240, abs=1)
+
+    async def test_an_outage_too_long_to_credit_keeps_the_day_but_reopens_the_check(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """Nothing knows what the lamp did across a two-hour outage.
+
+        The day's total is still worth reporting — it is an undercount, but the
+        alternative is telling the dashboard a lamp that ran all morning never
+        came on. The comparison is what must not inherit it: judging four hours
+        of on-time against a window that only opened at noon would report a
+        healthy lamp as stuck on.
+        """
+        hass.states.async_set(STUDY_SWITCH, STATE_ON)
+        await start(hass, freezer, at(9, 0))
+        await tick(hass, freezer, minutes=3 * 60)
+
+        for controller in hass.data[DOMAIN].light_controllers.values():
+            controller.async_stop()
+        freezer.tick(timedelta(hours=2))
+        rebuilt = await restart_lights(hass)
+        await tick(hass, freezer, minutes=60)
+
+        controller = rebuilt["study_shelf"]
+        # Four hours on the clock, one of them inside the reopened comparison.
+        assert controller.on_minutes == pytest.approx(240, abs=2)
+        assert controller.tracked_minutes == pytest.approx(60, abs=2)
+        # Which is the whole point: 240 against the hour the window has had
+        # open since noon would read as a lamp stuck on.
+        assert controller.deviation() is None
+
+    async def test_a_restart_the_next_morning_starts_at_zero(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """The record carries the day it belongs to, so a stale one is spotted
+        rather than inherited as today's head start."""
+        hass.states.async_set(STUDY_SWITCH, STATE_ON)
+        await start(hass, freezer, at(9, 0))
+        await tick(hass, freezer, minutes=4 * 60)
+
+        freezer.move_to(at(7, 0, day=16))
+        rebuilt = await restart_lights(hass)
+
+        assert rebuilt["study_shelf"].on_minutes == 0
+
+    async def test_a_power_report_does_not_cost_a_storage_write(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """The smart plug behind a grow light reports power every few seconds,
+        and each report is a state change. Writing on every one would be a
+        storage write every few seconds per fixture, for ever."""
+        hass.states.async_set(STUDY_SWITCH, STATE_ON)
+        await start(hass, freezer, at(9, 0))
+        await tick(hass, freezer, minutes=15)  # so there is a record to compare
+
+        before = (await reloaded_log(hass)).on_time("study_shelf")
+        assert before is not None
+        for watts in range(85, 95):
+            hass.states.async_set(STUDY_SWITCH, STATE_ON, {"power": watts})
+            await hass.async_block_till_done()
+
+        assert (await reloaded_log(hass)).on_time("study_shelf") == before
 
 
 class TestDliHistory:

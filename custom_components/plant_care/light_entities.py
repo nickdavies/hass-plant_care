@@ -29,6 +29,11 @@ class LightOnMinutesSensor(FixtureEntity, SensorEntity):
     here because the pair is the diagnosis — 0 of a guaranteed 480 is a dead
     lamp, 1440 of a possible 780 is one stuck on, and everything between is a
     lamp doing its job.
+
+    `tracked_minutes` is there so the pair still reads as a pair after an
+    outage long enough to reopen the comparison: the expectations then cover
+    less than the day the state reports, and it is the number they are actually
+    being compared against.
     """
 
     _attr_native_unit_of_measurement = MINUTES
@@ -60,6 +65,7 @@ class LightOnMinutesSensor(FixtureEntity, SensorEntity):
         guaranteed, possible = self._controller.expectation()
         deviation = self._controller.deviation()
         return {
+            "tracked_minutes": self._controller.tracked_minutes,
             "guaranteed_minutes": guaranteed,
             "possible_minutes": possible,
             "killswitch": self._controller.killed,
