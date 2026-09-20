@@ -76,6 +76,18 @@ class TestContent:
         assert "Needs attention" in cards[0]["content"]
         assert "sensor.plant_outstanding'" in cards[0]["content"]
 
+    async def test_the_overview_reads_the_rendering_rather_than_the_items(
+        self, integration: HomeAssistant
+    ) -> None:
+        """The household dashboards show the same list, so the Jinja that knows
+        what an item looks like lives on the sensor, not in each card."""
+        config = (
+            await integration.data["lovelace"].dashboards["plants"].async_load(False)
+        )
+        content = config["views"][0]["cards"][0]["cards"][0]["content"]
+        assert "'markdown'" in content
+        assert "item.label" not in content
+
     async def test_every_plant_gets_a_card(self, integration: HomeAssistant) -> None:
         views = await _views(integration)
         rendered = str(views["all"])

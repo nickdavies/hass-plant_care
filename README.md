@@ -100,6 +100,7 @@ custom_components/plant_care/
 │   ├── policy.py         the decisions, with their reasoning
 │   ├── owners.py         who a plant belongs to, and whose phone that is
 │   ├── config.py         the schema, the tables, cross-reference resolution
+│   ├── markdown.py       the outstanding feed, rendered for a card
 │   └── naming.py         every entity id, in one place
 ├── moisture.py         one coordinator per probe
 ├── light_control.py    one controller per grow light
@@ -177,6 +178,25 @@ because Home Assistant restarts far more often than a plant is watered and every
 restart would otherwise re-send everything outstanding. It is kept per action,
 so a missing phone is retried without the others repeating and a plant handed to
 a new owner reaches them.
+
+**The feed sensors render themselves.** Each carries the count as its state,
+the items as `items`, and the same list rendered as `markdown`. The generated
+tabs are not the only place this list appears — the household dashboards in
+`hass-configs` show it too — and a card that renders `items` itself has to know
+which fields each item kind carries, so a second copy of that Jinja is one that
+will not be updated when an item grows a field. A card is therefore two lines:
+
+```yaml
+type: markdown
+content: |
+  ## Needs attention ({{ states('sensor.plant_outstanding_nick') }})
+
+  {{ state_attr('sensor.plant_outstanding_nick', 'markdown') }}
+```
+
+Neither attribute is recorded: the count is worth a history, the prose is
+re-derivable at any time and would otherwise be written to the database on
+every measurement that moves.
 
 **The coordinator subscribes to `state_reported` as well as `state_changed`, and
 reads `last_reported`.** A pot sitting still reports the same number for hours;

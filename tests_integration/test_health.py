@@ -76,6 +76,18 @@ class TestBattery:
 
         assert "battery_low" not in kinds_for(integration, "passionfruit")
 
+    async def test_a_fault_reaches_the_rendering_the_cards_read(
+        self, integration: HomeAssistant
+    ) -> None:
+        """More than one dashboard shows this list, so it is rendered once on
+        the sensor rather than by each card's own Jinja."""
+        integration.states.async_set(PASSIONFRUIT_BATTERY, "9")
+        await probe_reports(integration, PASSIONFRUIT_RAW, 60.1)
+
+        rendered = integration.states.get(OUTSTANDING).attributes["markdown"]
+        assert "- **Passionfruit** — Probe battery low" in rendered
+        assert "\n  Soil probe battery at 9%." in rendered
+
     async def test_the_remedy_is_in_the_message(
         self, integration: HomeAssistant
     ) -> None:

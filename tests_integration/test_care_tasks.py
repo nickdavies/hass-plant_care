@@ -117,6 +117,14 @@ class TestFeedShape:
         assert isinstance(items, list)
         assert all(isinstance(item, dict) for item in items)
 
+    async def test_an_empty_feed_still_renders_something(
+        self, integration: HomeAssistant
+    ) -> None:
+        """A card reading the rendering must not go blank, which looks like a
+        broken card rather than a quiet one."""
+        state = integration.states.get(OUTSTANDING)
+        assert state.attributes["markdown"] == "Nothing outstanding."
+
     async def test_attention_counts_only_its_own_plant(
         self, integration: HomeAssistant
     ) -> None:
