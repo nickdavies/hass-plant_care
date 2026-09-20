@@ -17,7 +17,12 @@ from homeassistant.core import HomeAssistant
 from homeassistant.loader import DATA_CUSTOM_COMPONENTS
 from homeassistant.setup import async_setup_component
 
-from .conftest import DOMAIN, TEST_CONFIG, _ensure_custom_components_path
+from .conftest import (
+    DOMAIN,
+    LIGHT_CONFIG,
+    TEST_CONFIG,
+    _ensure_custom_components_path,
+)
 
 
 async def _try_setup(hass: HomeAssistant, config: dict[str, Any]) -> bool:
@@ -140,6 +145,23 @@ class TestRejectsBadConfig:
         """Rather than silently ignored — it used to mean something."""
         config = copy.deepcopy(TEST_CONFIG)
         config[DOMAIN]["notify"] = "notify.nick"
+        assert not await _try_setup(hass, config)
+
+    async def test_a_light_can_name_a_window_from_the_table(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Written once in `windows`, referenced by name from the fixture."""
+        config = copy.deepcopy(LIGHT_CONFIG)
+        light = config[DOMAIN]["lights"][0]
+        config[DOMAIN]["windows"] = {"study_day": light["window"]}
+        light["window"] = "study_day"
+        assert await _try_setup(hass, config)
+
+    async def test_an_unknown_window_name_is_rejected(
+        self, hass: HomeAssistant
+    ) -> None:
+        config = copy.deepcopy(LIGHT_CONFIG)
+        config[DOMAIN]["lights"][0]["window"] = "study_night"
         assert not await _try_setup(hass, config)
 
 

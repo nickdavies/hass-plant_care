@@ -14,11 +14,11 @@ therefore the CI of the repo holding the config — runs every one of them:
    every reference that would otherwise fail quietly at runtime is refused here
    with a message naming the plant or fixture.
 
-The config has four lookup tables — probe models, care tasks, DLI categories,
-owners — so a fact is written once and referenced by name. Everything a plant
-names outside this file is a Home Assistant entity id, written explicitly:
-nothing is derived from a naming convention that another integration might not
-share.
+The config has five lookup tables — probe models, care tasks, DLI categories,
+light windows, owners — so a fact is written once and referenced by name.
+Everything a plant names outside this file is a Home Assistant entity id,
+written explicitly: nothing is derived from a naming convention that another
+integration might not share.
 
 Uses plain voluptuous rather than `homeassistant.helpers.config_validation`, so
 this module stays importable without Home Assistant and its tests need no mocks.
@@ -62,6 +62,7 @@ FIELD_PROBE_MODELS = "probe_models"
 FIELD_CARE_TASKS = "care_tasks"
 FIELD_DLI_CATEGORIES = "dli_categories"
 FIELD_LIGHTS = "lights"
+FIELD_WINDOWS = "windows"
 FIELD_LUX_SENSORS = "lux_sensors"
 FIELD_PLANTS = "plants"
 FIELD_OWNERS = "owners"
@@ -279,7 +280,8 @@ def _awake_aware_window_schema() -> vol.Schema:
 def _exactly_one_shape(value: Mapping[str, Any]) -> Mapping[str, Any]:
     if not value:
         raise vol.Invalid(
-            f"window must be one of '{FIELD_FIXED}' or '{FIELD_AWAKE_AWARE}'"
+            f"window must be one of '{FIELD_FIXED}' or '{FIELD_AWAKE_AWARE}', or "
+            f"the name of a {FIELD_WINDOWS} entry"
         )
     return value
 
@@ -306,13 +308,31 @@ def _window_schema() -> vol.Schema:
     )
 
 
+def _window_or_name(value: Any) -> Any:
+    """A window written in place, or the name of one in `windows`.
+
+    Hand-written rather than `vol.Any`, for the same reason as `_calibration`:
+    a half-written inline window should be told what it is missing, not that
+    it is "not a valid value" for either alternative. A name is passed through
+    as a string and resolved in `parse`, where the table is.
+    """
+    if isinstance(value, str):
+        return value
+    if isinstance(value, Mapping):
+        return _window_schema()(value)
+    raise vol.Invalid(
+        f"window must be a map with '{FIELD_FIXED}' or '{FIELD_AWAKE_AWARE}', or "
+        f"the name of a {FIELD_WINDOWS} entry"
+    )
+
+
 def _light_schema() -> vol.Schema:
     return vol.Schema(
         {
             vol.Required(FIELD_NAME): _slug,
             vol.Required(FIELD_SWITCH): _entity_id,
             vol.Optional(FIELD_LUX_TO_PPFD): _POSITIVE_FLOAT,
-            vol.Required(FIELD_WINDOW): _window_schema(),
+            vol.Required(FIELD_WINDOW): _window_or_name,
         }
     )
 
@@ -433,6 +453,7 @@ def schema() -> vol.Schema:
             vol.Optional(FIELD_PROBE_MODELS, default={}): {str: _probe_model_schema()},
             vol.Optional(FIELD_CARE_TASKS, default={}): {str: _care_task_def_schema()},
             vol.Optional(FIELD_DLI_CATEGORIES, default={}): {str: _band_schema()},
+            vol.Optional(FIELD_WINDOWS, default={}): {str: _window_schema()},
             vol.Optional(FIELD_LIGHTS, default=[]): [_light_schema()],
             vol.Optional(FIELD_LUX_SENSORS, default=[]): [_lux_schema()],
             vol.Required(FIELD_PLANTS): [_plant_schema()],
@@ -528,7 +549,9 @@ def _parse_owners(data: Mapping[str, Any]) -> Owners:
 # ---- Fixtures -----------------------------------------------------------
 
 
-def _parse_window(data: Mapping[str, Any], fixture: str) -> LightWindow:
+def _parse_window(data: Mapping[str, Any], described: str) -> LightWindow:
+    """`described` is what the window belongs to, for the error: a light
+    fixture when written in place, a `windows` entry when written once."""
     try:
         if FIELD_FIXED in data:
             spec = data[FIELD_FIXED]
@@ -547,15 +570,48 @@ def _parse_window(data: Mapping[str, Any], fixture: str) -> LightWindow:
             days=frozenset(spec[FIELD_DAYS]) if FIELD_DAYS in spec else None,
         )
     except ValueError as err:
-        raise InvalidPlantConfig(f"light fixture '{fixture}': {err}") from err
+        raise InvalidPlantConfig(f"{described}: {err}") from err
 
 
-def _parse_lights(data: Mapping[str, Any]) -> tuple[LightFixture, ...]:
+def _parse_windows(data: Mapping[str, Any]) -> dict[str, LightWindow]:
+    """The `windows` table: a schedule written once, for every lamp on it.
+
+    Two lamps on the same shelf keep the same hours, and two inline copies of
+    the same window are two places for them to drift apart.
+    """
+    return {
+        _table_key(FIELD_WINDOWS, key): _parse_window(spec, f"window '{key}'")
+        for key, spec in data.get(FIELD_WINDOWS, {}).items()
+    }
+
+
+def _fixture_window(
+    entry: Mapping[str, Any], windows: Mapping[str, LightWindow]
+) -> LightWindow:
+    """In place, or by name. Windows are frozen, so sharing one between
+    fixtures is safe."""
+    fixture = entry[FIELD_NAME]
+    spec = entry[FIELD_WINDOW]
+    if not isinstance(spec, str):
+        return _parse_window(spec, f"light fixture '{fixture}'")
+    window = windows.get(spec)
+    if window is None:
+        known = ", ".join(sorted(windows)) or "nothing"
+        raise InvalidPlantConfig(
+            f"light fixture '{fixture}' names window '{spec}', which is not in "
+            f"{FIELD_WINDOWS} (known: {known})"
+        )
+    return window
+
+
+def _parse_lights(
+    data: Mapping[str, Any], windows: Mapping[str, LightWindow]
+) -> tuple[LightFixture, ...]:
     return tuple(
         LightFixture(
             name=entry[FIELD_NAME],
             switch_entity=entry[FIELD_SWITCH],
-            window=_parse_window(entry[FIELD_WINDOW], entry[FIELD_NAME]),
+            window=_fixture_window(entry, windows),
             lux_to_ppfd=entry.get(FIELD_LUX_TO_PPFD),
         )
         for entry in data.get(FIELD_LIGHTS, [])
@@ -805,6 +861,7 @@ def parse(data: Mapping[str, Any]) -> PlantCareConfig:
     probe_models = _parse_probe_models(data)
     care_tasks = _parse_care_tasks(data)
     dli_categories = _parse_dli_categories(data)
+    windows = _parse_windows(data)
 
     config = PlantCareConfig(
         plants=tuple(
@@ -812,7 +869,7 @@ def parse(data: Mapping[str, Any]) -> PlantCareConfig:
             for entry in data[FIELD_PLANTS]
         ),
         owners=_parse_owners(data),
-        lights=_parse_lights(data),
+        lights=_parse_lights(data, windows),
         lux_sensors=_parse_lux(data),
     )
 
