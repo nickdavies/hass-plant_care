@@ -95,19 +95,25 @@ def _on_time_items(data: PlantCareData, plant: Plant) -> list[dict[str, Any]]:
         if deviation is None:
             continue
 
+        # "Over the same stretch" rather than "today": both numbers are measured
+        # from whenever the count last opened, which is midnight most days and
+        # start-up after an outage long enough that nothing can vouch for what
+        # the lamp did during it.
         if deviation.direction is Direction.UNDER:
             label = f"{name} is not running"
             detail = (
-                f"'{name}' has been on for {deviation.actual} minutes today, against "
-                f"{deviation.guaranteed} its window guarantees by now. A dead bulb, an "
-                "outlet that dropped off the network, or automation somebody froze."
+                f"'{name}' has been on for {deviation.actual} minutes against the "
+                f"{deviation.guaranteed} its window guarantees over the same stretch. "
+                "A dead bulb, an outlet that dropped off the network, or automation "
+                "somebody froze."
             )
         else:
             label = f"{name} is running long"
             detail = (
-                f"'{name}' has been on for {deviation.actual} minutes today, past the "
-                f"{deviation.possible} its window could ever allow. The plants under "
-                "it are getting a photoperiod nobody chose, plus the heat."
+                f"'{name}' has been on for {deviation.actual} minutes, past the "
+                f"{deviation.possible} its window could ever allow over the same "
+                "stretch. The plants under it are getting a photoperiod nobody "
+                "chose, plus the heat."
             )
 
         items.append(

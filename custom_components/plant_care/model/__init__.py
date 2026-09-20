@@ -25,6 +25,8 @@ from .dli import (
     unstable,
 )
 from .light import (
+    MAX_RESTART_GAP_MINUTES,
+    ON_TIME_TOLERANCE_MINUTES,
     AwakeAwareWindow,
     FixedWindow,
     LightFixture,
@@ -54,6 +56,8 @@ from .policy import DEFAULT_POLICY, Policy
 
 __all__ = [
     "DEFAULT_POLICY",
+    "MAX_RESTART_GAP_MINUTES",
+    "ON_TIME_TOLERANCE_MINUTES",
     "AwakeAwareWindow",
     "Band",
     "BurnAlert",

@@ -14,7 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Coroutine
-from datetime import UTC, date, datetime, timedelta
+from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, TypeVar
 
 import pytest
@@ -23,6 +23,7 @@ from custom_components.plant_care.store import (
     KILLSWITCH_SINCE,
     EventKind,
     EventLog,
+    OnTimeRecord,
     event_key,
 )
 
@@ -68,6 +69,18 @@ def restarted(store: FakeStore) -> EventLog:
     log = EventLog(store)
     run(log.async_load())
     return log
+
+
+def _at_minute(minutes: float) -> OnTimeRecord:
+    """An on-time record with nothing interesting but its total."""
+    return OnTimeRecord(
+        day=NOW.date(),
+        minutes=minutes,
+        since=time(0, 0),
+        counted_from=0.0,
+        seen=NOW,
+        on=True,
+    )
 
 
 class TestCareEvents:
@@ -304,6 +317,49 @@ class TestAnnounced:
         assert "before per-owner routing" in caplog.text
 
 
+class TestOnTimeRecord:
+    def test_the_record_survives_a_restart_field_for_field(self) -> None:
+        """Every field is load-bearing on the other side of a restart: the day
+        decides whether it is inherited at all, `seen` how much of the break can
+        be credited, `on` whether that break counts as lit, and the two spans
+        what the dashboard and the on-time check are each told."""
+        store = FakeStore()
+        log = EventLog(store)
+        record = OnTimeRecord(
+            day=date(2026, 9, 15),
+            minutes=503.5,
+            since=time(9, 30),
+            counted_from=120.0,
+            seen=NOW,
+            on=True,
+        )
+        run(log.async_record_on_time("study_shelf", record))
+
+        assert restarted(store).on_time("study_shelf") == record
+
+    def test_a_rewrite_replaces_rather_than_accumulating(self) -> None:
+        """Written every few minutes, and each write is the running total."""
+        log = EventLog(FakeStore())
+        for minutes in (10.0, 20.0, 35.0):
+            run(log.async_record_on_time("study_shelf", _at_minute(minutes)))
+
+        stored = log.on_time("study_shelf")
+        assert stored is not None
+        assert stored.minutes == 35.0
+
+    def test_fixtures_do_not_share_a_record(self) -> None:
+        log = EventLog(FakeStore())
+        run(log.async_record_on_time("study_shelf", _at_minute(10.0)))
+
+        assert log.on_time("spare_shelf") is None
+
+    def test_never_written_is_none_not_zero(self) -> None:
+        """A fixture with no record has not run today's count yet, which is a
+        different thing from one that has counted nothing — zero would be
+        inherited as a real total and report the morning as dark."""
+        assert EventLog(FakeStore()).on_time("study_shelf") is None
+
+
 class TestCorruption:
     """One bad entry must not take the rest of the log with it.
 
@@ -336,6 +392,33 @@ class TestCorruption:
         store = FakeStore({"dli": {"monstera": {"tuesday": 3.0, "2026-09-15": 6.4}}})
         assert restarted(store).dli_history("monstera") == {date(2026, 9, 15): 6.4}
 
+    def test_a_half_written_on_time_record_discards_only_itself(self) -> None:
+        """A record is only usable whole — a missing `seen` gives no way to
+        judge the break, a missing `since` no span to compare over. Dropping it
+        costs that fixture the morning it had counted; keeping a partial one
+        would misreport it until midnight."""
+        store = FakeStore(
+            {
+                "on_time": {
+                    "study_shelf": {"day": "2026-09-15", "minutes": 300.0},
+                    "spare_shelf": {
+                        "day": "2026-09-15",
+                        "minutes": 42.0,
+                        "since": "00:00",
+                        "counted_from": 0.0,
+                        "seen": NOW.isoformat(),
+                        "on": False,
+                    },
+                }
+            }
+        )
+        log = restarted(store)
+
+        assert log.on_time("study_shelf") is None
+        spare = log.on_time("spare_shelf")
+        assert spare is not None
+        assert spare.minutes == 42.0
+
     def test_a_non_boolean_flag_is_ignored(self) -> None:
         store = FakeStore({"flags": {"monstera.needs_water": "yes"}})
         assert not restarted(store).needs_water("monstera")
@@ -353,6 +436,7 @@ class TestCorruption:
 
         assert log.dli_history("monstera") == {}
         assert log.killswitch_since("study_shelf") is None
+        assert log.on_time("study_shelf") is None
 
 
 class TestEverythingTogether:
@@ -373,6 +457,7 @@ class TestEverythingTogether:
         run(log.async_record_dli("monstera", date(2026, 9, 14), 6.4, 29))
         run(log.async_record_intervals("monstera", "silence", [(NOW, NOW + HOUR)]))
         run(log.async_set_announced({"notify.nick": {"monstera.care.feed"}}))
+        run(log.async_record_on_time("study_shelf", _at_minute(503.0)))
 
         after = restarted(store)
 
@@ -383,6 +468,7 @@ class TestEverythingTogether:
         assert after.dli_history("monstera") == {date(2026, 9, 14): 6.4}
         assert after.intervals("monstera", "silence") == [(NOW, NOW + HOUR)]
         assert after.announced() == {"notify.nick": {"monstera.care.feed"}}
+        assert after.on_time("study_shelf") == _at_minute(503.0)
 
     def test_the_stored_shape_is_json_safe(self) -> None:
         """`Store` serialises to JSON, so a `date` or `datetime` key reaching it
@@ -397,6 +483,7 @@ class TestEverythingTogether:
         run(log.async_record_dli("monstera", date(2026, 9, 14), 6.4, 29))
         run(log.async_record_intervals("monstera", "silence", [(NOW, NOW + HOUR)]))
         run(log.async_set_announced({"notify.nick": {"monstera.care.feed"}}))
+        run(log.async_record_on_time("study_shelf", _at_minute(503.0)))
 
         json.dumps(store.data)  # raises if anything in there is not JSON
 

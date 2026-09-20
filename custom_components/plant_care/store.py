@@ -18,7 +18,8 @@ from __future__ import annotations
 
 import logging
 from collections.abc import Iterable, Mapping
-from datetime import date, datetime
+from dataclasses import dataclass
+from datetime import date, datetime, time
 from enum import Enum
 from typing import Any, Protocol
 
@@ -70,6 +71,15 @@ than that."""
 SECTION_ANNOUNCED = "announced"
 """Feed items the notifier has already pushed, per notify action. Persisted so
 a restart does not push everything still outstanding a second time."""
+SECTION_ON_TIME = "on_time"
+"""How long each fixture has run today, as of the last flush.
+
+Persisted for the reason `SECTION_DLI` is. Home Assistant restarts several times
+over an afternoon anyone spends editing its config, and a counter that begins
+again at zero on each one reports a lamp that ran all morning as one that has
+barely come on — and takes the on-time check down with it, since a comparison
+that only ever sees the last twenty minutes cannot see a bulb that died at nine.
+"""
 
 FLAG_NEEDS_WATER = "needs_water"
 
@@ -83,6 +93,40 @@ two days ago would read as brand new every time Home Assistant restarted — and
 the 48h catchall that exists to catch exactly that forgetfulness would never
 fire. Same class of trap as an `input_datetime` defaulting to today at midnight.
 """
+
+
+@dataclass(frozen=True)
+class OnTimeRecord:
+    """One fixture's on-time accounting, as it stood at the last flush.
+
+    Two spans, not one, and that is the whole reason this is a record rather
+    than a number. `minutes` is the day, which is what the dashboard asks for.
+    The comparison against the window has to run over a stretch that was
+    actually watched, so it runs from `since`, with the minutes banked before
+    it held in `counted_from` and subtracted back out.
+
+    On an ordinary day the two are the same thing and `counted_from` is zero.
+    They only part company after an outage too long to account for.
+    """
+
+    day: date
+    minutes: float
+    """On-time for the whole day."""
+    since: time
+    """Local time-of-day the current comparison span opened — midnight
+    ordinarily, the moment Home Assistant came back after a long outage."""
+    counted_from: float
+    """Minutes already banked when that span opened."""
+    seen: datetime
+    """When this was written. The gap between it and the next start-up is what
+    a restart cost, and what decides whether the break can be credited."""
+    on: bool
+    """Whether the lamp was on at `seen`.
+
+    Stored rather than read off the switch at start-up because the switch
+    arrives from MQTT discovery some time *after* the controller does, so at
+    the moment the decision is made there is nothing there to read.
+    """
 
 
 class EventLog:
@@ -101,6 +145,7 @@ class EventLog:
         self._dli: dict[str, dict[date, float]] = {}
         self._intervals: dict[str, list[tuple[datetime, datetime]]] = {}
         self._announced: dict[str, set[str]] = {}
+        self._on_time: dict[str, OnTimeRecord] = {}
 
     async def async_load(self) -> None:
         raw: Mapping[str, Any] | None = await self._store.async_load()
@@ -151,6 +196,26 @@ class EventLog:
                     )
             self._intervals[key] = restored
 
+        for fixture, record in raw.get(SECTION_ON_TIME, {}).items():
+            try:
+                self._on_time[fixture] = OnTimeRecord(
+                    day=date.fromisoformat(record["day"]),
+                    minutes=float(record["minutes"]),
+                    since=time.fromisoformat(record["since"]),
+                    counted_from=float(record["counted_from"]),
+                    seen=datetime.fromisoformat(record["seen"]),
+                    on=bool(record["on"]),
+                )
+            except (KeyError, TypeError, ValueError):
+                # Dropping it costs one fixture the morning it has already
+                # counted; a half-read record would misreport that fixture
+                # until midnight, which is worse and much harder to notice.
+                _LOGGER.warning(
+                    "plant_care: discarding unreadable on-time record for %s: %r",
+                    fixture,
+                    record,
+                )
+
         announced = raw.get(SECTION_ANNOUNCED, {})
         if isinstance(announced, Mapping):
             for action, keys in announced.items():
@@ -183,6 +248,17 @@ class EventLog:
                     action: sorted(keys)
                     for action, keys in self._announced.items()
                     if keys
+                },
+                SECTION_ON_TIME: {
+                    fixture: {
+                        "day": record.day.isoformat(),
+                        "minutes": round(record.minutes, 3),
+                        "since": record.since.isoformat(),
+                        "counted_from": round(record.counted_from, 3),
+                        "seen": record.seen.isoformat(),
+                        "on": record.on,
+                    }
+                    for fixture, record in self._on_time.items()
                 },
             }
         )
@@ -261,6 +337,20 @@ class EventLog:
 
     def killswitch_since(self, fixture: str) -> datetime | None:
         return self.last(fixture, EventKind.LIGHT, KILLSWITCH_SINCE)
+
+    async def async_record_on_time(self, fixture: str, record: OnTimeRecord) -> None:
+        """Write down where a fixture's day has got to.
+
+        One record per fixture, replaced in place: nothing reads yesterday's,
+        and the day it belongs to is on the record, so a stale one is spotted
+        rather than inherited.
+        """
+        self._on_time[fixture] = record
+        await self._async_save()
+
+    def on_time(self, fixture: str) -> OnTimeRecord | None:
+        """`None` means no run has written one for this fixture yet."""
+        return self._on_time.get(fixture)
 
     # ---- Daily light integral ------------------------------------------
 
