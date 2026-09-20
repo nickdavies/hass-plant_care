@@ -621,6 +621,118 @@ class TestWindows:
             load_config(LIT_PLANT, lights=[broken], lux=[STUDY_LUX])
 
 
+STUDY_DAY: dict[str, Any] = STUDY_LIGHT["window"]
+NAMED_LIGHT: dict[str, Any] = {**STUDY_LIGHT, "window": "study_day"}
+
+
+class TestNamedWindows:
+    """A window written once in `windows` and named from a light, so two lamps
+    on the same hours cannot drift apart."""
+
+    def test_a_named_window_is_the_inline_one(self) -> None:
+        inline = load_config(LIT_PLANT, lights=[STUDY_LIGHT], lux=[STUDY_LUX])
+        named = load_config(
+            LIT_PLANT,
+            lights=[NAMED_LIGHT],
+            lux=[STUDY_LUX],
+            windows={"study_day": STUDY_DAY},
+        )
+        assert named.light("study_shelf").window == inline.light("study_shelf").window
+        assert named.light("study_shelf").is_sleep_sensitive
+        assert (
+            named.light("study_shelf").presence_entity == "sensor.person_presence_nick"
+        )
+
+    def test_a_fixed_window_can_be_named_too(self) -> None:
+        config = load_config(
+            LIT_PLANT,
+            lights=[{**STUDY_LIGHT, "window": "weekend"}],
+            lux=[STUDY_LUX],
+            windows={
+                "weekend": {
+                    "fixed": {"from": "07:00", "to": "19:00", "days": ["sat", "sun"]}
+                }
+            },
+        )
+        window = config.light("study_shelf").window
+        assert isinstance(window, FixedWindow)
+        assert window.days == frozenset({Weekday.SAT, Weekday.SUN})
+
+    def test_two_lights_share_one_window(self) -> None:
+        spare = {
+            "name": "spare_shelf",
+            "switch": "switch.spare_outlet_grow_lamp_1",
+            "window": "study_day",
+        }
+        config = load_config(
+            LIT_PLANT,
+            lights=[NAMED_LIGHT, spare],
+            lux=[STUDY_LUX],
+            windows={"study_day": STUDY_DAY},
+        )
+        assert config.light("study_shelf").window == config.light("spare_shelf").window
+
+    def test_an_unknown_name_names_the_fixture_and_the_table(self) -> None:
+        with pytest.raises(
+            InvalidPlantConfig, match="study_shelf.*'study_night'.*windows.*study_day"
+        ):
+            load_config(
+                LIT_PLANT,
+                lights=[{**STUDY_LIGHT, "window": "study_night"}],
+                lux=[STUDY_LUX],
+                windows={"study_day": STUDY_DAY},
+            )
+
+    def test_a_name_with_no_table_at_all_is_still_a_parse_error(self) -> None:
+        """Not a schema error: the message should say the table is empty, not
+        that a string is the wrong shape."""
+        with pytest.raises(InvalidPlantConfig, match="study_shelf.*known: nothing"):
+            load_config(LIT_PLANT, lights=[NAMED_LIGHT], lux=[STUDY_LUX])
+
+    def test_a_table_key_must_be_an_identifier(self) -> None:
+        with pytest.raises(InvalidPlantConfig, match="windows key"):
+            load_config(
+                LIT_PLANT,
+                lights=[STUDY_LIGHT],
+                lux=[STUDY_LUX],
+                windows={"Study Day": STUDY_DAY},
+            )
+
+    def test_a_bad_table_entry_names_the_window_not_a_fixture(self) -> None:
+        with pytest.raises(InvalidPlantConfig, match="window 'backwards'.*forward"):
+            load_config(
+                LIT_PLANT,
+                lights=[STUDY_LIGHT],
+                lux=[STUDY_LUX],
+                windows={"backwards": {"fixed": {"from": "19:00", "to": "07:00"}}},
+            )
+
+    def test_a_table_entry_is_checked_for_shape(self) -> None:
+        with pytest.raises(vol.Invalid):
+            load_config(
+                LIT_PLANT,
+                lights=[STUDY_LIGHT],
+                lux=[STUDY_LUX],
+                windows={"half": {"awake_aware": {"presence": "sensor.p"}}},
+            )
+
+    def test_an_unused_table_entry_is_not_an_error(self) -> None:
+        """Like every other table: a row nobody references is just a row."""
+        config = load_config(
+            LIT_PLANT,
+            lights=[STUDY_LIGHT],
+            lux=[STUDY_LUX],
+            windows={"spare": STUDY_DAY},
+        )
+        assert config.light("study_shelf").window is not None
+
+    def test_a_window_that_is_neither_map_nor_name_says_so(self) -> None:
+        for wrong in [["study_day"], 7, None]:
+            broken = {**STUDY_LIGHT, "window": wrong}
+            with pytest.raises(vol.Invalid, match="fixed.*awake_aware.*windows"):
+                load_config(LIT_PLANT, lights=[broken], lux=[STUDY_LUX])
+
+
 # ---- DLI ----------------------------------------------------------------
 
 

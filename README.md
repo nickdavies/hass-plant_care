@@ -15,10 +15,10 @@ Every other plant integration is config-flow only, so its configuration lives in
 `.storage` rather than git. This one takes its config from YAML, via
 `CONFIG_SCHEMA` — HA-native, no config flow, fully version controlled.
 
-The config is expressive and tightly validated. Three lookup tables — probe
-models, care tasks, DLI categories — mean a fact is written once and referenced
-by name; what a plant gets is derived from which fields it has, never from a
-feature flag. Every check, cross-references included, runs inside
+The config is expressive and tightly validated. Four lookup tables — probe
+models, care tasks, DLI categories, light windows — mean a fact is written once
+and referenced by name; what a plant gets is derived from which fields it has,
+never from a feature flag. Every check, cross-references included, runs inside
 `CONFIG_SCHEMA`, so `check_config` refuses a bad config before Home Assistant
 starts with it — and a CI job running `check_config` catches it on a pull
 request.
@@ -42,17 +42,22 @@ plant_care:
     feed:  { display: Feed,  icon: mdi:nutrition }
   dli_categories:
     foliage_tropical: { low: 4, high: 9 }
+  windows:                                    # written once, named from lights
+    study_day:
+      awake_aware:
+        presence: sensor.person_presence_nick
+        on_if_awake_after: "06:00"
+        on_after: "09:00"
+        on_even_if_asleep_until: "17:00"
+        on_until: "19:00"
   lights:
     - name: study_shelf
       switch: switch.nick_study_outlet_sansi_100w_lamp
       lux_to_ppfd: 0.0125
-      window:
-        awake_aware:
-          presence: sensor.person_presence_nick
-          on_if_awake_after: "06:00"
-          on_after: "09:00"
-          on_even_if_asleep_until: "17:00"
-          on_until: "19:00"
+      window: study_day
+    - name: spare_shelf
+      switch: switch.spare_outlet_grow_lamp
+      window: { fixed: { from: "07:00", to: "19:00" } }   # or written in place
   lux_sensors:
     - name: study_shelf
       entities: [sensor.esphome_study_lux_1, sensor.esphome_study_lux_2]
