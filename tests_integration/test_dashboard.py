@@ -16,6 +16,7 @@ from homeassistant.loader import DATA_CUSTOM_COMPONENTS
 from homeassistant.setup import async_setup_component
 
 from custom_components.plant_care.lovelace import MarkdownCard, View
+from custom_components.plant_care.model.owners import DEFAULT_PERSON_ICON
 
 from .conftest import (
     DOMAIN,
@@ -106,6 +107,14 @@ class TestPersonTabs:
         assert [view["path"] for view in config["views"]] == ["all", "nick", "britta"]
         assert [view["title"] for view in config["views"]] == ["All", "Nick", "Britta"]
 
+    async def test_a_tab_wears_the_icon_its_person_chose(
+        self, integration: HomeAssistant
+    ) -> None:
+        """`britta` chose none, so she gets the default rather than no icon."""
+        views = await _views(integration)
+        assert views["nick"]["icon"] == "mdi:human-male"
+        assert views["britta"]["icon"] == DEFAULT_PERSON_ICON
+
     async def test_a_tab_shows_owned_and_group_plants_only(
         self, integration: HomeAssistant
     ) -> None:
@@ -150,7 +159,7 @@ class TestPersonTabs:
             DOMAIN,
             {
                 DOMAIN: {
-                    "owners": {"nick": "notify.nick"},
+                    "owners": {"nick": {"action": "notify.nick"}},
                     "system_notify": "notify.phones",
                     "plants": [],
                 }

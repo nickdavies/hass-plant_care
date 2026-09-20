@@ -38,7 +38,7 @@ from .light import (
     on_time_deviation,
     ppfd_factor,
 )
-from .owners import Owners
+from .owners import Owner, Owners
 from .plant import (
     Calibrated,
     Calibrating,
@@ -77,6 +77,7 @@ __all__ = [
     "LuxFixture",
     "Moisture",
     "OnTimeDeviation",
+    "Owner",
     "Owners",
     "Plant",
     "PlantCareConfig",

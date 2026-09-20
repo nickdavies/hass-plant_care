@@ -310,7 +310,7 @@ class PlantsDashboard(GeneratedDashboard):
             self._view(
                 person.replace("_", " ").title(),
                 person,
-                "mdi:account",
+                self._config.owners.icon(person),
                 naming.person_outstanding(person),
                 self._config.plants_for(person),
                 self._config.fixtures_for_person(person),

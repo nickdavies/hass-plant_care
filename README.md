@@ -31,9 +31,13 @@ windows, staleness rules, defaults — lives in `model/policy.py`.
 plant_care:
   groups: !include ../../shared/groups.yaml   # shared with light_motion_profiles
   owners:                                     # a `groups` key is a group, else a person
-    nick: notify.nick
-    britta: notify.britta
-    primary: notify.phones
+    nick:
+      action: notify.nick
+      icon: mdi:human-male                    # their tab's icon; people only
+    britta:
+      action: notify.britta                   # no icon, so mdi:account
+    primary:
+      action: notify.phones
   system_notify: notify.phones                # faults belonging to no plant
   probe_models:
     thirdreality_soil_gen2: { heartbeat_minutes: 10, deadband_pp: 1.0 }
@@ -168,6 +172,10 @@ gets its plants on their own tab (`plants/<person>`) and in
 `sensor.plant_outstanding_<person>`, so members of a group in `owners` must be
 people in `owners`. Faults belonging to no plant go to `system_notify` and the
 shared `plants/all` tab only.
+
+A person may set an `icon` for their tab, defaulting to `mdi:account`. A group
+may not: it has no tab, so the icon would render nowhere and read as one that
+failed to apply — that config is refused rather than ignored.
 
 **Anything that appears in the feed is pushed once.** A sensor is only read by
 whoever is looking, and a silent probe found three days later has already cost

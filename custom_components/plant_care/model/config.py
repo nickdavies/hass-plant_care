@@ -43,7 +43,7 @@ from .light import (
     LuxFixture,
     Weekday,
 )
-from .owners import Owners
+from .owners import Owner, Owners
 from .plant import (
     Calibrated,
     Calibrating,
@@ -68,6 +68,7 @@ FIELD_OWNERS = "owners"
 FIELD_GROUPS = "groups"
 FIELD_SYSTEM_NOTIFY = "system_notify"
 FIELD_OWNER = "owner"
+FIELD_ACTION = "action"
 RESERVED_OWNER_ALL = "all"
 """The dashboard's shared tab path, so not an owner."""
 
@@ -237,6 +238,17 @@ def _care_task_def_schema() -> vol.Schema:
             vol.Required(FIELD_DISPLAY): _display,
             vol.Required(FIELD_ICON): _mdi_icon,
             vol.Optional(FIELD_DETECTED_BY): vol.In([DETECTED_BY_CALIBRATED_MOISTURE]),
+        }
+    )
+
+
+def _owner_schema() -> vol.Schema:
+    """`icon` is optional and people-only; the group case is refused in
+    `Owners.__post_init__`, where whether a name is a group is known."""
+    return vol.Schema(
+        {
+            vol.Required(FIELD_ACTION): _notify_action,
+            vol.Optional(FIELD_ICON): _mdi_icon,
         }
     )
 
@@ -436,7 +448,7 @@ def schema() -> vol.Schema:
             vol.Optional(FIELD_LIGHTS, default=[]): [_light_schema()],
             vol.Optional(FIELD_LUX_SENSORS, default=[]): [_lux_schema()],
             vol.Required(FIELD_PLANTS): [_plant_schema()],
-            vol.Optional(FIELD_OWNERS, default={}): {str: _notify_action},
+            vol.Optional(FIELD_OWNERS, default={}): {str: _owner_schema()},
             # The shared household file; members are checked only for groups
             # that `owners` names.
             vol.Optional(FIELD_GROUPS, default={}): {str: [str]},
@@ -504,17 +516,20 @@ def _parse_dli_categories(data: Mapping[str, Any]) -> dict[str, Band]:
 def _parse_owners(data: Mapping[str, Any]) -> Owners:
     """Owner keys become entity ids and tab paths, so they are checked as
     identifiers. Group keys are another component's too, so they are not."""
-    actions = {
-        _table_key(FIELD_OWNERS, key): action
-        for key, action in data.get(FIELD_OWNERS, {}).items()
+    entries = {
+        _table_key(FIELD_OWNERS, key): Owner(
+            action=spec[FIELD_ACTION],
+            icon=spec.get(FIELD_ICON),
+        )
+        for key, spec in data.get(FIELD_OWNERS, {}).items()
     }
-    if RESERVED_OWNER_ALL in actions:
+    if RESERVED_OWNER_ALL in entries:
         raise InvalidPlantConfig(
             f"owner '{RESERVED_OWNER_ALL}' is reserved for the shared dashboard tab"
         )
     try:
         return Owners(
-            actions=actions,
+            entries=entries,
             groups={
                 key: tuple(members)
                 for key, members in data.get(FIELD_GROUPS, {}).items()
@@ -824,7 +839,7 @@ def parse(data: Mapping[str, Any]) -> PlantCareConfig:
     lux_names = {f.name for f in config.lux_sensors}
 
     for plant in config.plants:
-        if plant.owner not in config.owners.actions:
+        if plant.owner not in config.owners:
             raise InvalidPlantConfig(
                 f"plant '{plant.name}' names owner '{plant.owner}', which is not "
                 f"in {FIELD_OWNERS}"
