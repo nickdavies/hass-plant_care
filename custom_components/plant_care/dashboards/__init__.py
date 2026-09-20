@@ -263,7 +263,11 @@ class PlantsDashboard(GeneratedDashboard):
         # Two days rather than a week, because the shape being read here is the
         # daily one: where accumulation flattens is when the light stopped, and
         # a week compresses that into nothing.
-        if plant.dli is not None:
+        #
+        # Keyed on `lux`, not on `dli`: the accumulation is measured as soon as
+        # something is watching, and this graph is how you decide what band to
+        # ask for. Waiting for the band would mean deciding it blind.
+        if plant.lux is not None:
             cards.append(
                 HistoryGraphCard(
                     title=f"{plant.display} — light",

@@ -15,9 +15,12 @@ from homeassistant.core import HomeAssistant
 
 from .conftest import (
     DOMAIN,
+    FERN_DLI,
     LUX_1,
     LUX_2,
     MONSTERA_DLI,
+    SILL_AVERAGE,
+    SILL_LUX,
     STUDY_LUX,
     STUDY_SWITCH,
     at,
@@ -232,3 +235,88 @@ class TestAlerts:
         await tick(hass, freezer, minutes=120)
 
         assert "light_deficit_today" not in kinds(hass, "monstera")
+
+
+class TestMeasuredButNotJudged:
+    """A plant with `lux` and no `dli`.
+
+    The point of the split: you cannot choose a defensible band for a plant
+    until you have watched what it actually receives, and the watching has to
+    have been recorded for that to be possible. So measuring runs on `lux`
+    alone, and the objective only decides whether anything is judged.
+    """
+
+    async def test_the_fixture_is_averaged_onto_its_own_sensor(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """The durable entity id: it is named for the fixture, so the ESPHome
+        entities behind it can be renamed or replaced without taking the
+        history with them."""
+        hass.states.async_set(SILL_LUX, "12000")
+        await start(hass, freezer, at(12, 0))
+
+        assert float(hass.states.get(SILL_AVERAGE).state) == pytest.approx(12000.0)
+
+    async def test_the_day_accumulates(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        hass.states.async_set(SILL_LUX, "10000")
+        await start(hass, freezer, at(10, 0))
+        before = float(hass.states.get(FERN_DLI).state)
+
+        await tick(hass, freezer, minutes=60)
+
+        assert float(hass.states.get(FERN_DLI).state) - before == pytest.approx(
+            mol_per_hour(10000, SUN_FACTOR), abs=0.001
+        )
+
+    async def test_the_total_reaches_the_store(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """Durable, not just live: a band chosen next fortnight is chosen from
+        this, and a total that only ever lived in memory would be gone."""
+        hass.states.async_set(SILL_LUX, "10000")
+        await start(hass, freezer, at(10, 0))
+
+        await tick(hass, freezer, minutes=60)
+
+        history = hass.data[DOMAIN].event_log.dli_history("window_fern")
+        assert history[at(10).date()] == pytest.approx(
+            mol_per_hour(10000, SUN_FACTOR), abs=0.05
+        )
+
+    async def test_the_sensor_carries_history_and_no_band(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        hass.states.async_set(SILL_LUX, "10000")
+        await start(hass, freezer, at(12, 0))
+
+        attributes = hass.states.get(FERN_DLI).attributes
+        assert "history" in attributes
+        for absent in ("category", "preferred_low", "preferred_high", "budget"):
+            assert absent not in attributes
+
+    async def test_nothing_is_judged(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """Darkness all day would page for a plant with a band. Here there is
+        no band, so there is nothing to say — and saying it anyway would be
+        inventing an objective nobody set."""
+        hass.states.async_set(SILL_LUX, "0")
+        await start(hass, freezer, at(9, 0))
+
+        await tick(hass, freezer, minutes=300)
+
+        assert kinds(hass, "window_fern") == set()
+
+    async def test_a_silent_fixture_is_still_a_fault(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """The one check that survives having no objective: a probe nobody can
+        read is broken hardware, which is true whether or not anyone has
+        decided what this plant's light ought to be."""
+        await start(hass, freezer, at(6, 0))
+
+        await tick(hass, freezer, minutes=7 * 60)
+
+        assert kinds(hass, "window_fern") == {"lux_silent"}

@@ -108,7 +108,7 @@ custom_components/plant_care/
 │   └── naming.py         every entity id, in one place
 ├── moisture.py         one coordinator per probe
 ├── light_control.py    one controller per grow light
-├── dli.py              one coordinator per measured plant
+├── dli.py              one coordinator per plant with a lux fixture
 ├── feed.py             what "outstanding" means, in one place
 ├── notifier.py         pushes each new feed item once, to its owner's action
 ├── store.py            durable events, flags, killswitch stamps, DLI history
@@ -297,3 +297,19 @@ an SLO here rather than a target. Tune the budget before tuning factors.
 zero.** One probe shaded by a single leaf reports a value true for that spot and
 wrong for the plant; a probe that has dropped out would otherwise read as
 darkness, which looks exactly like a failed lamp.
+
+**Measuring light does not require an objective.** `lux` alone gets a plant the
+averaged reading, the daily accumulation, and the durable history; `dli` only
+decides whether any of it is judged. The asymmetry is deliberate and runs one
+way — an objective with no fixture is refused at parse, because nothing would
+measure it. Nobody can choose a defensible band for a plant before watching what
+it actually receives for a fortnight, and a component that recorded nothing
+until the band existed would make that impossible. The one check that survives
+having no objective is the silent-fixture fault, which is a statement about the
+hardware and true either way.
+
+The entity ids this produces are also the reason to start early: the lux average
+is named for the *fixture* and the accumulation for the *plant*, both from the
+config document, so the sensors behind them can be renamed, reflashed or
+replaced without taking any history with them. Fixture and plant names are the
+durable identifiers; nothing else is.

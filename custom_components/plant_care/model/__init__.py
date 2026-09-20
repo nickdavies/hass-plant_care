@@ -14,6 +14,7 @@ from .config import (
     schema,
 )
 from .dli import (
+    DEFAULT_WINDOW_DAYS,
     Band,
     BurnAlert,
     BurnKind,
@@ -57,6 +58,7 @@ from .policy import DEFAULT_POLICY, Policy
 
 __all__ = [
     "DEFAULT_POLICY",
+    "DEFAULT_WINDOW_DAYS",
     "MAX_RESTART_GAP_MINUTES",
     "ON_TIME_TOLERANCE_MINUTES",
     "AwakeAwareWindow",
