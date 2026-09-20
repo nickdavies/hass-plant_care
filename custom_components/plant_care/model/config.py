@@ -504,16 +504,25 @@ def _parse_dli_categories(data: Mapping[str, Any]) -> dict[str, Band]:
 def _parse_owners(data: Mapping[str, Any]) -> Owners:
     """Owner keys become entity ids and tab paths, so they are checked as
     identifiers. Group keys are another component's too, so they are not."""
-    return Owners(
-        actions={
-            _table_key(FIELD_OWNERS, key): action
-            for key, action in data.get(FIELD_OWNERS, {}).items()
-        },
-        groups={
-            key: tuple(members) for key, members in data.get(FIELD_GROUPS, {}).items()
-        },
-        system_notify=data[FIELD_SYSTEM_NOTIFY],
-    )
+    actions = {
+        _table_key(FIELD_OWNERS, key): action
+        for key, action in data.get(FIELD_OWNERS, {}).items()
+    }
+    if RESERVED_OWNER_ALL in actions:
+        raise InvalidPlantConfig(
+            f"owner '{RESERVED_OWNER_ALL}' is reserved for the shared dashboard tab"
+        )
+    try:
+        return Owners(
+            actions=actions,
+            groups={
+                key: tuple(members)
+                for key, members in data.get(FIELD_GROUPS, {}).items()
+            },
+            system_notify=data[FIELD_SYSTEM_NOTIFY],
+        )
+    except ValueError as err:
+        raise InvalidPlantConfig(str(err)) from err
 
 
 # ---- Fixtures -----------------------------------------------------------
@@ -758,20 +767,6 @@ class PlantCareConfig:
     def fixtures_for(self, plant: Plant) -> tuple[LightFixture, ...]:
         return tuple(f for name in plant.lights if (f := self.light(name)) is not None)
 
-    # ---- Owners ---------------------------------------------------------
-
-    def notify_for(self, plant: Plant) -> str:
-        return self.owners.action(plant.owner)
-
-    def people(self) -> tuple[str, ...]:
-        return self.owners.people()
-
-    def is_group(self, name: str) -> bool:
-        return self.owners.is_group(name)
-
-    def members(self, name: str) -> tuple[str, ...]:
-        return self.owners.members(name)
-
     def plants_for(self, person: str) -> tuple[Plant, ...]:
         """Owned outright, or through a group."""
         return tuple(p for p in self.plants if person in self.owners.members(p.owner))
@@ -789,34 +784,6 @@ class PlantCareConfig:
         """
         referenced = {name for plant in self.plants for name in plant.lights}
         return tuple(f for f in self.lights if f.name not in referenced)
-
-
-def _check_owners(owners: Owners) -> None:
-    """Every group in `owners` must be made of people in `owners`: each member
-    gets a tab and a sensor. Groups only in the shared file are not checked."""
-    if RESERVED_OWNER_ALL in owners.actions:
-        raise InvalidPlantConfig(
-            f"owner '{RESERVED_OWNER_ALL}' is reserved for the shared dashboard tab"
-        )
-    for name in owners.actions:
-        if not owners.is_group(name):
-            continue
-        members = owners.groups[name]
-        if not members:
-            raise InvalidPlantConfig(
-                f"owner '{name}' is a group with no members, so nobody would be told"
-            )
-        for member in members:
-            if owners.is_group(member):
-                raise InvalidPlantConfig(
-                    f"owner '{name}' is a group whose member '{member}' is itself "
-                    "a group; a group may only contain people"
-                )
-            if member not in owners.actions:
-                raise InvalidPlantConfig(
-                    f"owner '{name}' is a group whose member '{member}' is not in "
-                    f"{FIELD_OWNERS}, so it has no notify action and no dashboard"
-                )
 
 
 def _reject_duplicates(names: list[str], what: str) -> None:
@@ -852,8 +819,6 @@ def parse(data: Mapping[str, Any]) -> PlantCareConfig:
     _reject_duplicates([p.name for p in config.plants], "plant")
     _reject_duplicates([f.name for f in config.lights], "light fixture")
     _reject_duplicates([f.name for f in config.lux_sensors], "lux fixture")
-
-    _check_owners(config.owners)
 
     fixture_names = {f.name for f in config.lights}
     lux_names = {f.name for f in config.lux_sensors}

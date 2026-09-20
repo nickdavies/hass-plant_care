@@ -63,7 +63,7 @@ async def async_setup_platform(
     )
     entities.append(OutstandingSensor(data))
     entities.extend(
-        PersonOutstandingSensor(data, person) for person in data.config.people()
+        PersonOutstandingSensor(data, person) for person in data.config.owners.people()
     )
     async_add_entities(entities)
 

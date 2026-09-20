@@ -33,7 +33,6 @@ from homeassistant.helpers.event import async_track_time_interval
 
 from .const import RECOMPUTE_INTERVAL, SIGNAL_CARE_UPDATED
 from .feed import all_items
-from .model import PlantCareConfig
 
 if TYPE_CHECKING:
     from . import PlantCareData
@@ -51,14 +50,6 @@ def item_key(item: dict[str, Any]) -> str:
     """
     subject = item.get("task") or item.get("fixture") or ""
     return f"{item.get('plant')}.{item['kind']}.{subject}"
-
-
-def route(config: PlantCareConfig, item: dict[str, Any]) -> str:
-    """The one notify action an item goes to."""
-    owner = item.get("owner")
-    if owner is None:
-        return config.owners.system_notify
-    return config.owners.action(owner)
 
 
 def item_line(item: dict[str, Any]) -> str:
@@ -136,7 +127,7 @@ class FeedNotifier:
         """
         current: dict[str, dict[str, dict[str, Any]]] = {}
         for item in all_items(self._data):
-            action = route(self._data.config, item)
+            action = self._data.config.owners.route(item.get("owner"))
             current.setdefault(action, {})[item_key(item)] = item
 
         new = {

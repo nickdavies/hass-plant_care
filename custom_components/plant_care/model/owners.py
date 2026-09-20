@@ -21,11 +21,33 @@ class Owners:
     system_notify: str
     """Where a fault belonging to no plant goes."""
 
+    def __post_init__(self) -> None:
+        # Every group in `actions` must be made of people in `actions`: each
+        # member gets a tab and a sensor. Groups only in the shared file are
+        # not checked.
+        for name in self.actions:
+            if not self.is_group(name):
+                continue
+            members = self.groups[name]
+            if not members:
+                raise ValueError(
+                    f"owner '{name}' is a group with no members, so nobody would "
+                    "be told"
+                )
+            for member in members:
+                if self.is_group(member):
+                    raise ValueError(
+                        f"owner '{name}' is a group whose member '{member}' is "
+                        "itself a group; a group may only contain people"
+                    )
+                if member not in self.actions:
+                    raise ValueError(
+                        f"owner '{name}' is a group whose member '{member}' has "
+                        "no notify action and no dashboard"
+                    )
+
     def is_group(self, name: str) -> bool:
         return name in self.groups
-
-    def is_person(self, name: str) -> bool:
-        return name in self.actions and name not in self.groups
 
     def people(self) -> tuple[str, ...]:
         return tuple(name for name in self.actions if not self.is_group(name))
@@ -37,4 +59,11 @@ class Owners:
         return (name,)
 
     def action(self, owner: str) -> str:
+        return self.actions[owner]
+
+    def route(self, owner: str | None) -> str:
+        """The action an item goes to: its owner's, or `system_notify` when it
+        belongs to no plant."""
+        if owner is None:
+            return self.system_notify
         return self.actions[owner]

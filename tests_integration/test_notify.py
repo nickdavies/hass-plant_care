@@ -24,12 +24,7 @@ from pytest_homeassistant_custom_component.common import (
 )
 
 from custom_components.plant_care.model import parse
-from custom_components.plant_care.notifier import (
-    FeedNotifier,
-    item_key,
-    item_line,
-    route,
-)
+from custom_components.plant_care.notifier import FeedNotifier, item_key, item_line
 from custom_components.plant_care.store import STORAGE_KEY, STORAGE_VERSION, EventLog
 
 from .conftest import (
@@ -289,12 +284,10 @@ class TestShape:
         assert item_key(study) != item_key(spare)
 
     def test_an_item_routes_to_its_owner_or_to_system_notify(self) -> None:
-        config = parse(TEST_CONFIG[DOMAIN])
-        assert route(config, {"owner": "nick", "kind": "care"}) == "notify.nick"
-        assert route(config, {"owner": "primary", "kind": "care"}) == "notify.phones"
-        assert route(config, {"owner": None, "kind": "automation_frozen"}) == (
-            "notify.phones"
-        )
+        owners = parse(TEST_CONFIG[DOMAIN]).owners
+        assert owners.route("nick") == "notify.nick"
+        assert owners.route("primary") == "notify.phones"
+        assert owners.route(None) == "notify.phones"
 
     def test_a_care_line_says_how_late(self) -> None:
         line = item_line(

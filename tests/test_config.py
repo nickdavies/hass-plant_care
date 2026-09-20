@@ -737,22 +737,22 @@ class TestOwners:
     def test_a_person_owner_resolves_to_their_action(self) -> None:
         config = load_config(CALIBRATED_PLANT, BRITTAS_PLANT)
         nicks, brittas = config.plants
-        assert config.notify_for(nicks) == "notify.nick"
-        assert config.notify_for(brittas) == "notify.britta"
+        assert config.owners.action(nicks.owner) == "notify.nick"
+        assert config.owners.action(brittas.owner) == "notify.britta"
 
     def test_a_group_owner_resolves_to_the_shared_action(self) -> None:
         """One action per group, not one per member: the group's phones are
         the notify platform's business."""
         config = load_config(SHARED_PLANT)
         (shared,) = config.plants
-        assert config.is_group("primary")
-        assert config.notify_for(shared) == "notify.phones"
+        assert config.owners.is_group("primary")
+        assert config.owners.action(shared.owner) == "notify.phones"
 
     def test_people_are_the_owners_that_are_not_groups(self) -> None:
         config = load_config(CALIBRATED_PLANT)
-        assert config.people() == ("nick", "britta")
-        assert config.members("nick") == ("nick",)
-        assert config.members("primary") == ("nick", "britta")
+        assert config.owners.people() == ("nick", "britta")
+        assert config.owners.members("nick") == ("nick",)
+        assert config.owners.members("primary") == ("nick", "britta")
 
     def test_a_person_sees_their_own_and_their_groups_plants(self) -> None:
         config = load_config(CALIBRATED_PLANT, BRITTAS_PLANT, SHARED_PLANT)
@@ -809,9 +809,9 @@ class TestOwners:
     def test_a_group_nobody_owns_through_may_name_strangers(self) -> None:
         """`guests` is not in `owners`, so its strangers are not checked."""
         config = load_config(CALIBRATED_PLANT)
-        assert config.is_group("guests")
+        assert config.owners.is_group("guests")
         assert "guests" not in config.owners.actions
-        assert "guest_1" not in config.people()
+        assert "guest_1" not in config.owners.people()
 
     def test_an_owner_key_must_be_an_identifier(self) -> None:
         """They become entity ids and tab paths."""

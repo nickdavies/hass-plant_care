@@ -327,6 +327,6 @@ class PlantsDashboard(GeneratedDashboard):
                 self._config.plants_for(person),
                 self._config.fixtures_for_person(person),
             )
-            for person in self._config.people()
+            for person in self._config.owners.people()
         )
         return Dashboard(views).render()
