@@ -12,11 +12,17 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.util import dt as dt_util
 
-from .const import ATTR_ITEMS, DOMAIN, RECOMPUTE_INTERVAL, SIGNAL_CARE_UPDATED
+from .const import (
+    ATTR_ITEMS,
+    ATTR_MARKDOWN,
+    DOMAIN,
+    RECOMPUTE_INTERVAL,
+    SIGNAL_CARE_UPDATED,
+)
 from .entity import PlantEntity
 from .feed import all_items, person_items, plant_items
 from .light_entities import DliTodaySensor, LightOnMinutesSensor, LuxAverageSensor
-from .model import CareTask, Entity, Plant, naming
+from .model import CareTask, Entity, Plant, markdown, naming
 from .moisture_entities import moisture_sensors
 from .store import EventLog
 
@@ -172,7 +178,7 @@ class PlantAttentionSensor(_CareDrivenSensor):
 
 
 class _FeedSensor(SensorEntity):
-    """A count of outstanding items with the list as an attribute.
+    """A count of outstanding items, with the list and its rendering attached.
 
     Not a `PlantEntity`: a feed spans plants, so it gets no device.
 
@@ -181,15 +187,19 @@ class _FeedSensor(SensorEntity):
     order entities happen to update in, and would go stale for one cycle every
     time anything changed; walking the same source they walk cannot disagree
     with them.
+
+    The state is the count, so a dashboard that only wants a number needs no
+    template at all, and one that wants the list gets it already rendered.
     """
 
     _attr_should_poll = False
     _attr_state_class = SensorStateClass.MEASUREMENT
     _attr_icon = "mdi:format-list-checks"
 
-    # The count is worth a history; the list is prose, re-derivable at any time,
-    # and would be written into the database on every measurement that moves.
-    _unrecorded_attributes = frozenset({ATTR_ITEMS})
+    # The count is worth a history; the list and its rendering are prose,
+    # re-derivable at any time, and would be written into the database on every
+    # measurement that moves.
+    _unrecorded_attributes = frozenset({ATTR_ITEMS, ATTR_MARKDOWN})
 
     def __init__(self, data: PlantCareData, entity: Entity, name: str) -> None:
         self.entity_id = entity.full
@@ -232,7 +242,8 @@ class _FeedSensor(SensorEntity):
 
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
-        return {ATTR_ITEMS: self._items()}
+        items = self._items()
+        return {ATTR_ITEMS: items, ATTR_MARKDOWN: markdown.outstanding(items)}
 
 
 class OutstandingSensor(_FeedSensor):

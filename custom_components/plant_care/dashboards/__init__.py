@@ -27,26 +27,14 @@ from ..lovelace import (
 )
 from ..model import Calibrated, Entity, LightFixture, Plant, PlantCareConfig, naming
 
-# Items come from several sources with different shapes — a care task carries
-# days and an interval, a fault carries a remedy, a frozen killswitch carries no
-# plant at all — so every field but `label` is tested before it is rendered.
-# Anything else and one new item kind turns the whole card into an error.
+# The list arrives already rendered, in `model/markdown.py`. This card is not
+# the only one showing it — the household dashboards show the same feed — and a
+# copy of the Jinja on each is one that will not be updated when an item grows a
+# field. The count in the heading is the sensor's own state.
 # A `Template` rather than `str.format`, because the body is Jinja.
-OVERVIEW = Template("""## Needs attention
+OVERVIEW = Template("""## Needs attention ({{ states('$entity') }})
 
-{% set items = state_attr('$entity', 'items') or [] %}
-{% if items | count == 0 %}
-Nothing outstanding.
-{% else %}
-{% for item in items %}
-- **{{ item.name }}** — {{ item.label }}
-{%- if item.days is defined and item.days is not none %} ({{ item.days | round(0) }}d ago{% if item.every is defined %}, every {{ item.every }}d{% endif %})
-{%- endif %}
-{%- if item.detail is defined and item.detail is not none %}
-  {{ item.detail }}
-{%- endif %}
-{% endfor %}
-{% endif %}""")
+{{ state_attr('$entity', 'markdown') }}""")
 
 
 def overview(entity: Entity) -> str:

@@ -25,6 +25,14 @@ The integration point for anything downstream — a dashboard card today, a brid
 to an external task system later. Named once so both ends agree.
 """
 
+ATTR_MARKDOWN = "markdown"
+"""The same feed, rendered — see `model/markdown.py`.
+
+Carried on the sensor rather than built by each card, because a card that
+renders `items` itself has to know what every item kind carries, and there is
+more than one dashboard showing this list.
+"""
+
 ATTR_PLANT = "plant"
 ATTR_TASK = "task"
 ATTR_WHEN = "when"

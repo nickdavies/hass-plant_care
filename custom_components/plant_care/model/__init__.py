@@ -5,6 +5,7 @@ installed, which is why the unit tests need no framework mocking. The Home
 Assistant edge lives in the platform modules one level up.
 """
 
+from . import markdown
 from .config import (
     InvalidPlantConfig,
     PlantCareConfig,
@@ -84,6 +85,7 @@ __all__ = [
     "SourceEntity",
     "Weekday",
     "is_asleep",
+    "markdown",
     "on_time_deviation",
     "outside_survival",
     "parse",
