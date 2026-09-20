@@ -1,4 +1,4 @@
-"""Pushing new feed items to a notify action.
+"""Pushing new feed items to whoever owns the plant.
 
 The feed is a sensor, and a sensor is only read by whoever happens to be
 looking. A silent probe found on the dashboard three days later has already
@@ -12,6 +12,11 @@ text. A key that leaves the feed is forgotten, so the same fault coming back is
 announced again. The announced set is persisted, because Home Assistant
 restarts far more often than a plant is watered and every restart would
 otherwise re-send everything still outstanding.
+
+Each item goes to one action: its owner's, or `system_notify` for a fault that
+belongs to no plant. The announced set is kept per action, so a missing phone
+is retried without the others repeating and a plant handed to a new owner
+reaches them.
 """
 
 from __future__ import annotations
@@ -64,11 +69,10 @@ class FeedNotifier:
     """Watches the same sources the outstanding sensor does and pushes the
     difference."""
 
-    def __init__(self, hass: HomeAssistant, data: PlantCareData, action: str) -> None:
+    def __init__(self, hass: HomeAssistant, data: PlantCareData) -> None:
         self._hass = hass
         self._data = data
-        self._domain, self._service = action.split(".", 1)
-        self._announced: set[str] = set()
+        self._announced: dict[str, set[str]] = {}
         self._unsubs: list[Callable[[], None]] = []
 
     async def async_start(self) -> None:
@@ -117,39 +121,56 @@ class FeedNotifier:
     def _evaluate(self) -> None:
         """Diff the feed against what has been announced, in the callback.
 
-        The set is updated here, synchronously, before anything is awaited:
+        The sets are updated here, synchronously, before anything is awaited:
         several sources fire in one burst, and two evaluations that both saw a
         new item before either had recorded it would push it twice.
         """
-        items = all_items(self._data)
-        current = {item_key(item): item for item in items}
-        new = [item for key, item in current.items() if key not in self._announced]
-        changed = set(current) != self._announced
-        self._announced = set(current)
+        current: dict[str, dict[str, dict[str, Any]]] = {}
+        for item in all_items(self._data):
+            action = self._data.config.owners.route(item.get("owner"))
+            current.setdefault(action, {})[item_key(item)] = item
+
+        new = {
+            action: [
+                item
+                for key, item in keyed.items()
+                if key not in self._announced.get(action, set())
+            ]
+            for action, keyed in current.items()
+        }
+        new = {action: items for action, items in new.items() if items}
+
+        snapshot = {action: set(keyed) for action, keyed in current.items()}
+        changed = snapshot != self._announced
+        self._announced = snapshot
         if changed:
             self._hass.async_create_task(self._async_push(new))
 
-    async def _async_push(self, new: list[dict[str, Any]]) -> None:
-        if new:
+    async def _async_push(self, new: dict[str, list[dict[str, Any]]]) -> None:
+        for action, items in new.items():
+            domain, service = action.split(".", 1)
             try:
                 await self._hass.services.async_call(
-                    self._domain,
-                    self._service,
+                    domain,
+                    service,
                     {
                         "title": TITLE,
-                        "message": "\n".join(item_line(item) for item in new),
+                        "message": "\n".join(item_line(item) for item in items),
                     },
                     blocking=True,
                 )
             except ServiceNotFound:
-                # Forget these so the next recompute tries again, rather than
-                # marking them announced when nobody was told.
-                self._announced.difference_update(item_key(item) for item in new)
+                # Forget these, for this action only, so the next recompute
+                # tries again rather than marking them announced when nobody
+                # was told.
+                announced = self._announced.get(action, set())
+                announced.difference_update(item_key(item) for item in items)
+                if not announced:
+                    self._announced.pop(action, None)
                 _LOGGER.warning(
-                    "plant_care: notify action %s.%s does not exist; %d feed item(s) "
+                    "plant_care: notify action %s does not exist; %d feed item(s) "
                     "not pushed",
-                    self._domain,
-                    self._service,
-                    len(new),
+                    action,
+                    len(items),
                 )
         await self._data.event_log.async_set_announced(self._announced)

@@ -117,3 +117,8 @@ def attention(plant: Plant) -> Entity:
 def outstanding() -> Entity:
     """Everything outstanding, across every plant. The integration point."""
     return Entity(Domain.SENSOR, f"{PREFIX}_outstanding")
+
+
+def person_outstanding(person: str) -> Entity:
+    """One person's plants, owned outright or through a group."""
+    return Entity(Domain.SENSOR, f"{PREFIX}_outstanding_{person}")

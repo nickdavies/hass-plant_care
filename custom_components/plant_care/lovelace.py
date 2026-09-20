@@ -1,13 +1,7 @@
 """Building a Lovelace dashboard from code.
 
-VENDORED from hass-light_motion_profiles (`custom_components/
-light_motion_profiles/lovelace.py`). That module is already entirely generic —
-nothing in it mentions lights — so this is a copy rather than a fork, and
-changes worth keeping should go back to both until it becomes a shared package
-or repo.
-
-Local additions beyond the original: `MarkdownCard`, `HistoryGraphCard` and
-`Divider`, none of which the lighting component needed.
+VENDORED, byte for byte, in both hass-light_motion_profiles and
+hass-plant_care. Change it in both or in neither, until it is its own package.
 """
 
 from __future__ import annotations
@@ -36,18 +30,30 @@ class Renderable(ABC):
 
 class View(Renderable):
     def __init__(
-        self, title: str, cards: Sequence[Renderable], panel: bool = True
+        self,
+        title: str,
+        cards: Sequence[Renderable],
+        panel: bool = True,
+        path: str | None = None,
+        icon: str | None = None,
     ) -> None:
         self.title = title
         self.cards = cards
         self.panel = panel
+        self.path = path
+        self.icon = icon
 
     def render(self) -> DBT:
-        return {
+        config: dict[str, Any] = {
             "panel": self.panel,
             "title": self.title,
             "cards": [card.render() for card in self.cards],
         }
+        if self.path is not None:
+            config["path"] = self.path
+        if self.icon is not None:
+            config["icon"] = self.icon
+        return config
 
 
 class VerticalStackCard(Renderable):
@@ -104,9 +110,7 @@ def divider() -> dict[str, str]:
 
 
 class MarkdownCard(Renderable):
-    """Free text. Used where a card needs to explain itself — a plant that is
-    still calibrating, say — rather than leaving the reason in a comment nobody
-    reading the dashboard will see."""
+    """Free text, for a card that needs to explain itself."""
 
     def __init__(self, content: str, title: str | None = None) -> None:
         self.content = content

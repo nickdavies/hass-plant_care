@@ -36,12 +36,16 @@ def plant_items(data: PlantCareData, plant: Plant) -> list[dict[str, Any]]:
     coordinator = data.coordinators.get(plant.name)
     if coordinator is not None:
         items.extend(
-            issue.as_item(plant.name, plant.display) for issue in coordinator.health()
+            issue.as_item(plant.name, plant.display, plant.owner)
+            for issue in coordinator.health()
         )
 
     dli = data.dli_coordinators.get(plant.name)
     if dli is not None:
-        items.extend(issue.as_item(plant.name, plant.display) for issue in dli.alerts())
+        items.extend(
+            issue.as_item(plant.name, plant.display, plant.owner)
+            for issue in dli.alerts()
+        )
     else:
         # No lux fixture, so nothing measures what this plant actually received
         # and the only evidence available is whether its lamps ran. Which is why
@@ -54,6 +58,7 @@ def plant_items(data: PlantCareData, plant: Plant) -> list[dict[str, Any]]:
             {
                 "plant": plant.name,
                 "name": plant.display,
+                "owner": plant.owner,
                 "kind": "needs_water",
                 "label": "Needs water",
                 "days": data.event_log.days_since_watered(plant.name, now),
@@ -68,6 +73,7 @@ def plant_items(data: PlantCareData, plant: Plant) -> list[dict[str, Any]]:
             {
                 "plant": plant.name,
                 "name": plant.display,
+                "owner": plant.owner,
                 "kind": "care",
                 "task": task.task,
                 "label": task.display,
@@ -108,6 +114,7 @@ def _on_time_items(data: PlantCareData, plant: Plant) -> list[dict[str, Any]]:
             {
                 "plant": plant.name,
                 "name": plant.display,
+                "owner": plant.owner,
                 "kind": IssueKind.LIGHT_HOURS_DEVIATION.value,
                 "label": label,
                 "detail": detail,
@@ -123,14 +130,25 @@ def system_items(data: PlantCareData) -> list[dict[str, Any]]:
 
     Only one today: a killswitch left on long enough to have been forgotten.
     It carries `plant: None`, because attaching it to one of the plants under
-    the fixture would hide it from everyone looking at the others.
+    the fixture would hide it from everyone looking at the others, and
+    `owner: None` routes it to `system_notify`. The fixture is named so two
+    frozen lamps do not share one announce key.
     """
     now = dt_util.utcnow()
     return [
-        issue.as_item()
+        {**issue.as_item(), "fixture": controller.fixture.name}
         for controller in data.light_controllers.values()
         if (issue := controller.frozen_issue(now)) is not None
     ]
+
+
+def person_items(data: PlantCareData, person: str) -> list[dict[str, Any]]:
+    """One person's plants, owned outright or through a group. System faults
+    belong to nobody, so they stay on the shared feed."""
+    items: list[dict[str, Any]] = []
+    for plant in data.config.plants_for(person):
+        items.extend(plant_items(data, plant))
+    return items
 
 
 def all_items(data: PlantCareData) -> list[dict[str, Any]]:

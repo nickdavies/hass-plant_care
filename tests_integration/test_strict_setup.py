@@ -109,6 +109,39 @@ class TestRejectsBadConfig:
         config[DOMAIN]["plants"].append(copy.deepcopy(config[DOMAIN]["plants"][0]))
         assert not await _try_setup(hass, config)
 
+    async def test_a_plant_without_an_owner_is_rejected(
+        self, hass: HomeAssistant
+    ) -> None:
+        """No phone to page, no tab to appear on."""
+        config = copy.deepcopy(TEST_CONFIG)
+        config[DOMAIN]["plants"][0].pop("owner")
+        assert not await _try_setup(hass, config)
+
+    async def test_an_unknown_owner_is_rejected(self, hass: HomeAssistant) -> None:
+        assert not await _try_setup(hass, _with_first_plant(owner="ghost"))
+
+    async def test_a_group_member_nobody_can_reach_is_rejected(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Every member gets a tab and a sensor, so every member needs an
+        action of their own."""
+        config = copy.deepcopy(TEST_CONFIG)
+        config[DOMAIN]["owners"].pop("britta")
+        assert not await _try_setup(hass, config)
+
+    async def test_system_notify_is_required(self, hass: HomeAssistant) -> None:
+        config = copy.deepcopy(TEST_CONFIG)
+        config[DOMAIN].pop("system_notify")
+        assert not await _try_setup(hass, config)
+
+    async def test_the_old_single_notify_key_is_rejected(
+        self, hass: HomeAssistant
+    ) -> None:
+        """Rather than silently ignored — it used to mean something."""
+        config = copy.deepcopy(TEST_CONFIG)
+        config[DOMAIN]["notify"] = "notify.nick"
+        assert not await _try_setup(hass, config)
+
 
 class TestCalibratingIsExplicit:
     async def test_a_calibrating_plant_sets_up_and_is_monitored(
@@ -130,6 +163,11 @@ class TestCalibratingIsExplicit:
         assert await _try_setup(hass, config)
 
 
+EMPTY_CONFIG: dict[str, Any] = {
+    DOMAIN: {"plants": [], "system_notify": "notify.phones"}
+}
+
+
 class TestTheEmptyConfig:
     """`plants: []` has to set up cleanly.
 
@@ -138,20 +176,22 @@ class TestTheEmptyConfig:
     """
 
     async def test_it_sets_up(self, hass: HomeAssistant) -> None:
-        assert await _try_setup(hass, {DOMAIN: {"plants": []}})
+        assert await _try_setup(hass, copy.deepcopy(EMPTY_CONFIG))
 
     async def test_the_feed_exists_and_is_empty(self, hass: HomeAssistant) -> None:
         """Rather than absent — a consumer reading the feed should find nothing
         outstanding, not an entity that does not exist."""
-        assert await _try_setup(hass, {DOMAIN: {"plants": []}})
+        assert await _try_setup(hass, copy.deepcopy(EMPTY_CONFIG))
 
         state = hass.states.get("sensor.plant_outstanding")
         assert state is not None
         assert state.state == "0"
         assert state.attributes["items"] == []
 
-    async def test_the_dashboard_still_renders(self, hass: HomeAssistant) -> None:
-        assert await _try_setup(hass, {DOMAIN: {"plants": []}})
+    async def test_the_dashboard_still_renders_with_only_the_shared_tab(
+        self, hass: HomeAssistant
+    ) -> None:
+        assert await _try_setup(hass, copy.deepcopy(EMPTY_CONFIG))
 
         config = await hass.data["lovelace"].dashboards["plants"].async_load(False)
-        assert config["views"]
+        assert [view["path"] for view in config["views"]] == ["all"]

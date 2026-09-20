@@ -2,8 +2,8 @@
 
 A Home Assistant component for running a plant-care operation: moisture
 monitoring, watering detection, grow light scheduling, daily light integral as a
-service objective, recurring care tasks, and one consolidated feed of everything
-outstanding.
+service objective, recurring care tasks, one consolidated feed of everything
+outstanding, routed and tabbed per owner.
 
 **Status: feature complete, not yet deployed.** Everything described here works
 and is tested. None of it has run against real hardware, and every tolerance in
@@ -29,7 +29,12 @@ windows, staleness rules, defaults — lives in `model/policy.py`.
 
 ```yaml
 plant_care:
-  notify: notify.nick
+  groups: !include ../../shared/groups.yaml   # shared with light_motion_profiles
+  owners:                                     # a `groups` key is a group, else a person
+    nick: notify.nick
+    britta: notify.britta
+    primary: notify.phones
+  system_notify: notify.phones                # faults belonging to no plant
   probe_models:
     thirdreality_soil_gen2: { heartbeat_minutes: 10, deadband_pp: 1.0 }
   care_tasks:
@@ -54,6 +59,7 @@ plant_care:
   plants:
     - name: passionfruit
       species: passiflora edulis
+      owner: nick
       moisture:
         model: thirdreality_soil_gen2
         entities:
@@ -64,6 +70,7 @@ plant_care:
       care:
         - { task: feed, every_days: 14 }
     - name: monstera
+      owner: primary
       moisture:
         model: thirdreality_soil_gen2
         entities: { moisture: sensor.nick_study_sensor_monstera_window_soil_moisture }
@@ -72,6 +79,7 @@ plant_care:
       lux: study_shelf
       dli: { category: foliage_tropical }
     - name: front_step_pot
+      owner: britta
       care:
         - { task: water, every_days: 4 }
 ```
@@ -90,14 +98,16 @@ custom_components/plant_care/
 │   ├── dli.py            bands, error budget, burn rates, the integrator
 │   ├── signals.py        smoothing, watering detection, moisture health
 │   ├── policy.py         the decisions, with their reasoning
+│   ├── owners.py         who a plant belongs to, and whose phone that is
 │   ├── config.py         the schema, the tables, cross-reference resolution
 │   └── naming.py         every entity id, in one place
 ├── moisture.py         one coordinator per probe
 ├── light_control.py    one controller per grow light
 ├── dli.py              one coordinator per measured plant
 ├── feed.py             what "outstanding" means, in one place
-├── notifier.py         pushes each new feed item once, to `notify`
+├── notifier.py         pushes each new feed item once, to its owner's action
 ├── store.py            durable events, flags, killswitch stamps, DLI history
+├── lovelace.py         dashboard-from-code, vendored from light_motion_profiles
 └── sensor.py, binary_sensor.py, button.py, switch.py, dashboards/
 ```
 
@@ -149,13 +159,24 @@ and the days-since sensor exposes the exact `last_watered` it produced so an
 entry can be checked. A service with a timestamp, not a dashboard button: the
 button is what would become the second source of truth.
 
+**Every plant has one owner: a person or a group.** A name in `owners` is a
+group iff it is a key of `groups`, which is the household file
+`light_motion_profiles` also includes, so membership cannot drift. A group has
+one shared notify action. Membership decides dashboards: each member of a group
+gets its plants on their own tab (`plants/<person>`) and in
+`sensor.plant_outstanding_<person>`, so members of a group in `owners` must be
+people in `owners`. Faults belonging to no plant go to `system_notify` and the
+shared `plants/all` tab only.
+
 **Anything that appears in the feed is pushed once.** A sensor is only read by
 whoever is looking, and a silent probe found three days later has already cost
-the plant. With `notify:` set, each new item goes to that action the moment it
-appears — identified by what it is about, not its text, since days-since ticks
-on every recompute — and never again while it stays. The announced set is
-persisted, because Home Assistant restarts far more often than a plant is
-watered and every restart would otherwise re-send everything outstanding.
+the plant. Each new item goes to its owner's action the moment it appears —
+identified by what it is about, not its text, since days-since ticks on every
+recompute — and never again while it stays. The announced set is persisted,
+because Home Assistant restarts far more often than a plant is watered and every
+restart would otherwise re-send everything outstanding. It is kept per action,
+so a missing phone is retried without the others repeating and a plant handed to
+a new owner reaches them.
 
 **The coordinator subscribes to `state_reported` as well as `state_changed`, and
 reads `last_reported`.** A pot sitting still reports the same number for hours;

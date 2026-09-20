@@ -40,6 +40,7 @@ class TestNaming:
             species=None,
             moisture=None,
             care=(FEED,),
+            owner="nick",
         )
 
     def test_per_plant_names_are_namespaced(self) -> None:
@@ -72,5 +73,6 @@ class TestNaming:
             species=None,
             moisture=None,
             care=(FEED,),
+            owner="nick",
         )
         assert naming.attention(self.plant).full != naming.attention(other).full

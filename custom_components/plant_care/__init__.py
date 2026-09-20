@@ -165,8 +165,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     )
     hass.data[DOMAIN] = data
 
-    if parsed.notify is not None:
-        await FeedNotifier(hass, data, parsed.notify).async_start()
+    await FeedNotifier(hass, data).async_start()
 
     async def record_watering(call: ServiceCall) -> None:
         plant = call.data[ATTR_PLANT]

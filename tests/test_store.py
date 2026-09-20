@@ -253,33 +253,55 @@ class TestBudgetIntervals:
 
 
 class TestAnnounced:
-    def test_the_set_survives_a_restart(self) -> None:
+    def test_the_sets_survive_a_restart_per_action(self) -> None:
         store = FakeStore()
         log = EventLog(store)
         run(
-            log.async_set_announced({"passionfruit.battery_low.", "monstera.care.feed"})
+            log.async_set_announced(
+                {
+                    "notify.nick": {"passionfruit.battery_low."},
+                    "notify.phones": {"monstera.care.feed"},
+                }
+            )
         )
         assert restarted(store).announced() == {
-            "passionfruit.battery_low.",
-            "monstera.care.feed",
+            "notify.nick": {"passionfruit.battery_low."},
+            "notify.phones": {"monstera.care.feed"},
         }
 
     def test_a_write_replaces_rather_than_merges(self) -> None:
         store = FakeStore()
         log = EventLog(store)
-        run(log.async_set_announced({"a", "b"}))
-        run(log.async_set_announced({"b"}))
-        assert restarted(store).announced() == {"b"}
+        run(log.async_set_announced({"notify.nick": {"a", "b"}, "notify.b": {"c"}}))
+        run(log.async_set_announced({"notify.nick": {"b"}}))
+        assert restarted(store).announced() == {"notify.nick": {"b"}}
 
-    def test_the_returned_set_is_a_copy(self) -> None:
+    def test_an_action_with_nothing_announced_is_not_written(self) -> None:
+        store = FakeStore()
+        log = EventLog(store)
+        run(log.async_set_announced({"notify.nick": set()}))
+        assert restarted(store).announced() == {}
+
+    def test_the_returned_mapping_is_a_copy_all_the_way_down(self) -> None:
         log = EventLog(FakeStore())
-        run(log.async_set_announced({"a"}))
-        log.announced().add("b")
-        assert log.announced() == {"a"}
+        run(log.async_set_announced({"notify.nick": {"a"}}))
+        log.announced()["notify.nick"].add("b")
+        log.announced()["notify.britta"] = {"c"}
+        assert log.announced() == {"notify.nick": {"a"}}
 
-    def test_a_non_string_key_is_ignored(self) -> None:
-        store = FakeStore({"announced": ["a", 3, None]})
-        assert restarted(store).announced() == {"a"}
+    def test_junk_inside_an_action_is_ignored(self) -> None:
+        store = FakeStore({"announced": {"notify.nick": ["a", 3, None]}})
+        assert restarted(store).announced() == {"notify.nick": {"a"}}
+
+    def test_an_action_that_is_not_a_list_is_ignored(self) -> None:
+        store = FakeStore({"announced": {"notify.nick": "a", "notify.b": ["b"]}})
+        assert restarted(store).announced() == {"notify.b": {"b"}}
+
+    def test_the_flat_list_from_before_routing_is_discarded(self, caplog) -> None:
+        """Nothing says which phone those went to; one repeat beats a guess."""
+        store = FakeStore({"announced": ["monstera.care.feed"]})
+        assert restarted(store).announced() == {}
+        assert "before per-owner routing" in caplog.text
 
 
 class TestCorruption:
@@ -350,7 +372,7 @@ class TestEverythingTogether:
         run(log.async_set_killswitch_since("study_shelf", NOW))
         run(log.async_record_dli("monstera", date(2026, 9, 14), 6.4, 29))
         run(log.async_record_intervals("monstera", "silence", [(NOW, NOW + HOUR)]))
-        run(log.async_set_announced({"monstera.care.feed"}))
+        run(log.async_set_announced({"notify.nick": {"monstera.care.feed"}}))
 
         after = restarted(store)
 
@@ -360,7 +382,7 @@ class TestEverythingTogether:
         assert after.killswitch_since("study_shelf") == NOW
         assert after.dli_history("monstera") == {date(2026, 9, 14): 6.4}
         assert after.intervals("monstera", "silence") == [(NOW, NOW + HOUR)]
-        assert after.announced() == {"monstera.care.feed"}
+        assert after.announced() == {"notify.nick": {"monstera.care.feed"}}
 
     def test_the_stored_shape_is_json_safe(self) -> None:
         """`Store` serialises to JSON, so a `date` or `datetime` key reaching it
@@ -374,7 +396,7 @@ class TestEverythingTogether:
         run(log.async_set_killswitch_since("study_shelf", NOW))
         run(log.async_record_dli("monstera", date(2026, 9, 14), 6.4, 29))
         run(log.async_record_intervals("monstera", "silence", [(NOW, NOW + HOUR)]))
-        run(log.async_set_announced({"monstera.care.feed"}))
+        run(log.async_set_announced({"notify.nick": {"monstera.care.feed"}}))
 
         json.dumps(store.data)  # raises if anything in there is not JSON
 

@@ -195,6 +195,9 @@ class Plant:
     species: str | None
     moisture: Moisture | None
     care: tuple[CareTask, ...]
+    owner: str
+    """A key of `owners`: a person or a group. Required — an unowned plant has
+    no phone to page and no tab to appear on."""
 
     lights: tuple[str, ...] = ()
     """Fixture names. The fixtures themselves live once on the config, not
