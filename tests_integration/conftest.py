@@ -43,9 +43,9 @@ TEST_CONFIG: dict[str, Any] = {
             "pest_check": {"display": "Pest check", "icon": "mdi:bug-outline"},
         },
         "owners": {
-            "nick": "notify.nick",
-            "britta": "notify.britta",
-            "primary": "notify.phones",
+            "nick": {"action": "notify.nick", "icon": "mdi:human-male"},
+            "britta": {"action": "notify.britta"},
+            "primary": {"action": "notify.phones"},
         },
         "groups": {
             "primary": ["nick", "britta"],
@@ -161,7 +161,10 @@ MONSTERA_DLI = "sensor.plant_monstera_dli_today"
 LIGHT_CONFIG: dict[str, Any] = {
     DOMAIN: {
         "dli_categories": {"foliage_tropical": {"low": 4.0, "high": 9.0}},
-        "owners": {"nick": "notify.nick", "britta": "notify.britta"},
+        "owners": {
+            "nick": {"action": "notify.nick"},
+            "britta": {"action": "notify.britta"},
+        },
         "system_notify": "notify.phones",
         "lights": [
             {

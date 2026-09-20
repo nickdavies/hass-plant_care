@@ -25,6 +25,7 @@ from custom_components.plant_care.model import (
     schema,
 )
 from custom_components.plant_care.model.config import DEFAULT_SUN_LUX_TO_PPFD
+from custom_components.plant_care.model.owners import DEFAULT_PERSON_ICON
 
 PROBE_MODELS: dict[str, Any] = {
     "thirdreality_soil_gen2": {"heartbeat_minutes": 10, "deadband_pp": 1.0}
@@ -46,9 +47,9 @@ DLI_CATEGORIES: dict[str, Any] = {
 }
 
 OWNERS: dict[str, Any] = {
-    "nick": "notify.nick",
-    "britta": "notify.britta",
-    "primary": "notify.phones",
+    "nick": {"action": "notify.nick", "icon": "mdi:human-male"},
+    "britta": {"action": "notify.britta"},
+    "primary": {"action": "notify.phones"},
 }
 
 # The household file, shared with light_motion_profiles. `guests` and
@@ -253,7 +254,7 @@ class TestTables:
             schema()(
                 {
                     "plants": [{"name": "pot", "owner": "nick"}],
-                    "owners": {"nick": "notify.nick"},
+                    "owners": {"nick": {"action": "notify.nick"}},
                     "system_notify": "notify.nick",
                 }
             )
@@ -791,14 +792,17 @@ class TestOwners:
         with pytest.raises(InvalidPlantConfig, match="owner 'primary'.*'britta'"):
             load_config(
                 CALIBRATED_PLANT,
-                owners={"nick": "notify.nick", "primary": "notify.phones"},
+                owners={
+                    "nick": {"action": "notify.nick"},
+                    "primary": {"action": "notify.phones"},
+                },
             )
 
     def test_a_group_inside_a_group_is_refused(self) -> None:
         with pytest.raises(InvalidPlantConfig, match="owner 'everyone'.*'primary'"):
             load_config(
                 CALIBRATED_PLANT,
-                owners={**OWNERS, "everyone": "notify.phones"},
+                owners={**OWNERS, "everyone": {"action": "notify.phones"}},
                 groups={**GROUPS, "everyone": ["primary"]},
             )
 
@@ -810,25 +814,57 @@ class TestOwners:
         """`guests` is not in `owners`, so its strangers are not checked."""
         config = load_config(CALIBRATED_PLANT)
         assert config.owners.is_group("guests")
-        assert "guests" not in config.owners.actions
+        assert "guests" not in config.owners
         assert "guest_1" not in config.owners.people()
+
+    def test_a_person_keeps_the_icon_they_chose(self) -> None:
+        config = load_config(CALIBRATED_PLANT)
+        assert config.owners.icon("nick") == "mdi:human-male"
+
+    def test_a_person_who_chose_no_icon_gets_the_default(self) -> None:
+        config = load_config(CALIBRATED_PLANT)
+        assert config.owners.icon("britta") == DEFAULT_PERSON_ICON
+
+    @pytest.mark.parametrize("bad", ["human-male", "mdi:Human", "mdi:", 3])
+    def test_anything_but_an_mdi_icon_is_rejected(self, bad: Any) -> None:
+        with pytest.raises(vol.Invalid, match="icon"):
+            load_config(
+                CALIBRATED_PLANT,
+                owners={**OWNERS, "nick": {"action": "notify.nick", "icon": bad}},
+            )
+
+    def test_a_group_may_not_choose_an_icon(self) -> None:
+        """Only people get a tab, so a group's icon would render nowhere and
+        reads as one that failed to apply."""
+        with pytest.raises(InvalidPlantConfig, match="owner 'primary'.*icon"):
+            load_config(
+                CALIBRATED_PLANT,
+                owners={
+                    **OWNERS,
+                    "primary": {"action": "notify.phones", "icon": "mdi:account-group"},
+                },
+            )
 
     def test_an_owner_key_must_be_an_identifier(self) -> None:
         """They become entity ids and tab paths."""
         with pytest.raises(InvalidPlantConfig, match="owners key 'Nick'"):
-            load_config(CALIBRATED_PLANT, owners={**OWNERS, "Nick": "notify.nick"})
+            load_config(
+                CALIBRATED_PLANT, owners={**OWNERS, "Nick": {"action": "notify.nick"}}
+            )
 
     def test_all_is_not_an_owner(self) -> None:
         """The shared tab's path."""
         with pytest.raises(InvalidPlantConfig, match="'all'.*reserved"):
-            load_config(CALIBRATED_PLANT, owners={**OWNERS, "all": "notify.phones"})
+            load_config(
+                CALIBRATED_PLANT, owners={**OWNERS, "all": {"action": "notify.phones"}}
+            )
 
     @pytest.mark.parametrize(
         "bad", ["nick", "sensor.nick", "notify.Nick", "notify.", 3]
     )
     def test_anything_but_a_notify_action_is_rejected(self, bad: Any) -> None:
         with pytest.raises(vol.Invalid, match="notify action"):
-            load_config(CALIBRATED_PLANT, owners={**OWNERS, "nick": bad})
+            load_config(CALIBRATED_PLANT, owners={**OWNERS, "nick": {"action": bad}})
         with pytest.raises(vol.Invalid, match="notify action"):
             load_config(CALIBRATED_PLANT, system_notify=bad)
 
