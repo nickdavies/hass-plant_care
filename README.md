@@ -52,7 +52,8 @@ plant_care:
       lux_to_ppfd: 0.0125
       window:
         awake_aware:
-          presence: sensor.person_presence_nick
+          quiet_when:                         # or `presence: <sensor>` for one person
+            binary_sensor: binary_sensor.presence_output_everyone_any_asleep
           on_if_awake_after: "06:00"
           on_after: "09:00"
           on_even_if_asleep_until: "17:00"
@@ -98,7 +99,7 @@ Assistant entity, whichever integration created it.
 custom_components/plant_care/
 ├── model/              pure Python, zero Home Assistant imports
 │   ├── plant.py          the domain types
-│   ├── light.py          windows, presence, lux→PPFD, on-time bounds
+│   ├── light.py          windows, sleep matchers, lux→PPFD, on-time bounds
 │   ├── dli.py            bands, error budget, burn rates, the integrator
 │   ├── signals.py        smoothing, watering detection, moisture health
 │   ├── policy.py         the decisions, with their reasoning
@@ -237,6 +238,33 @@ on a *detected* watering, and complete channelling produces no rise to detect.
 That case is caught instead by the needs-water latch never clearing — which is
 why the latch is cleared only by a detected watering, never by moisture drifting
 up on its own. There is a test named after it.
+
+**Whose sleep a lamp answers to is a pluggable matcher.** An awake-aware
+window names one under `quiet_when`, and the matcher answers a single question:
+is somebody this lamp must not disturb asleep. Two kinds exist:
+
+- `presence: <sensor>` reads a `light_motion_profiles` presence sensor directly
+  and is quiet only when nobody it covers is up. `presence:` written straight
+  on the window is shorthand for it, and it needs no other component.
+- `binary_sensor: <entity>` is quiet while the sensor is `on`. It exists for
+  the rule a presence sensor cannot express: a lamp bright enough to light the
+  whole house should hold off while *anyone* is asleep, including a guest,
+  even when its owner is up. `light_motion_profiles` publishes exactly that as
+  `binary_sensor.presence_output_<group>_any_asleep`.
+
+The rule lives in `light_motion_profiles` rather than here, because who is
+asleep is that component's model: it already knows who is a guest, who is
+away, and how a group's states combine, and a second copy of that matching
+would be one that drifts. Nothing is imported either way — the two components
+share an entity id and nothing else, so each still runs alone.
+
+Both kinds fail the same way: anything but a clear "asleep" — off, `unknown`,
+`unavailable`, a missing entity — leaves the lamp free, for the reason in
+`is_asleep`. And a matcher only ever closes the window's edges. The stretch
+between `on_after` and `on_even_if_asleep_until` belongs to the plant, so a
+guest sleeping until eleven costs it the early light and never the guaranteed
+part — which is also why the on-time check's bounds do not depend on which
+matcher a lamp uses.
 
 **A killswitch freezes a fixture; it does not turn it off.** One boolean rather
 than a kill plus a force, because two can contradict each other. That makes a

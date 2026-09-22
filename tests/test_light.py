@@ -16,10 +16,12 @@ from custom_components.plant_care.model import (
     MAX_RESTART_GAP_MINUTES,
     ON_TIME_TOLERANCE_MINUTES,
     AwakeAwareWindow,
+    BinarySensorMatcher,
     Direction,
     FixedWindow,
     LightFixture,
     LuxFixture,
+    PresenceMatcher,
     Weekday,
     is_asleep,
     on_time_deviation,
@@ -35,7 +37,7 @@ STUDY = AwakeAwareWindow(
     on_after=time(9, 0),
     on_even_if_asleep_until=time(17, 0),
     on_until=time(19, 0),
-    presence_entity=PRESENCE,
+    quiet_when=PresenceMatcher(PRESENCE),
 )
 
 
@@ -110,7 +112,7 @@ class TestAwakeAwareWindow:
             on_after=time(9, 0),
             on_even_if_asleep_until=time(17, 0),
             on_until=time(19, 0),
-            presence_entity=PRESENCE,
+            quiet_when=PresenceMatcher(PRESENCE),
             days=frozenset({Weekday.SAT}),
         )
         assert weekend.guaranteed_minutes(time(0, 0), time(23, 59), Weekday.MON) == 0
@@ -157,7 +159,7 @@ class TestSchedule:
             on_after=time(9, 0),
             on_even_if_asleep_until=time(17, 0),
             on_until=time(19, 0),
-            presence_entity=PRESENCE,
+            quiet_when=PresenceMatcher(PRESENCE),
             days=frozenset({Weekday.SUN, Weekday.SAT}),
         )
         assert weekend.schedule()[0].text == "09:00–17:00 Sat, Sun"
@@ -192,7 +194,7 @@ class TestWindowInvariants:
                 on_after=time(5, 0),
                 on_even_if_asleep_until=time(17, 0),
                 on_until=time(19, 0),
-                presence_entity=PRESENCE,
+                quiet_when=PresenceMatcher(PRESENCE),
             )
         with pytest.raises(
             ValueError, match="on_even_if_asleep_until .* after on_until"
@@ -202,7 +204,7 @@ class TestWindowInvariants:
                 on_after=time(9, 0),
                 on_even_if_asleep_until=time(20, 0),
                 on_until=time(19, 0),
-                presence_entity=PRESENCE,
+                quiet_when=PresenceMatcher(PRESENCE),
             )
 
     def test_equal_bounds_are_allowed_between_regions(self) -> None:
@@ -212,7 +214,7 @@ class TestWindowInvariants:
             on_after=time(9, 0),
             on_even_if_asleep_until=time(17, 0),
             on_until=time(17, 0),
-            presence_entity=PRESENCE,
+            quiet_when=PresenceMatcher(PRESENCE),
         )
         assert window.is_on_at(time(12, 0), Weekday.MON, asleep=True)
 
@@ -223,7 +225,7 @@ class TestWindowInvariants:
                 on_after=time(6, 0),
                 on_even_if_asleep_until=time(6, 0),
                 on_until=time(6, 0),
-                presence_entity=PRESENCE,
+                quiet_when=PresenceMatcher(PRESENCE),
             )
 
 
@@ -251,6 +253,62 @@ class TestPresence:
         power, a light wrongly held off starves a plant."""
         assert not is_asleep(None)
         assert not is_asleep("unavailable")
+
+
+class TestMatchers:
+    """Whose sleep a window answers to. Both kinds fail towards light."""
+
+    OUTPUT = "binary_sensor.presence_output_everyone_any_asleep"
+
+    def test_a_presence_matcher_reads_the_presence_set(self) -> None:
+        matcher = PresenceMatcher(PRESENCE)
+        assert matcher.entity_ids == (PRESENCE,)
+        assert matcher.is_quiet({PRESENCE: "asleep"})
+        assert not matcher.is_quiet({PRESENCE: "awake,asleep"})
+
+    def test_a_presence_matcher_with_no_state_is_not_quiet(self) -> None:
+        assert not PresenceMatcher(PRESENCE).is_quiet({PRESENCE: None})
+        assert not PresenceMatcher(PRESENCE).is_quiet({})
+
+    def test_a_binary_sensor_matcher_is_quiet_only_when_on(self) -> None:
+        """The case a presence sensor cannot express: one guest asleep while
+        everyone else is up. The rule that says so lives in the sensor."""
+        matcher = BinarySensorMatcher(self.OUTPUT)
+        assert matcher.entity_ids == (self.OUTPUT,)
+        assert matcher.is_quiet({self.OUTPUT: "on"})
+        assert not matcher.is_quiet({self.OUTPUT: "off"})
+
+    def test_a_broken_binary_sensor_leaves_the_lamp_free(self) -> None:
+        """A rule that cannot be evaluated must not starve a plant for as long
+        as it stays broken."""
+        matcher = BinarySensorMatcher(self.OUTPUT)
+        for state in ("unknown", "unavailable", None):
+            assert not matcher.is_quiet({self.OUTPUT: state})
+        assert not matcher.is_quiet({})
+
+    def test_a_binary_sensor_matcher_refuses_other_domains(self) -> None:
+        with pytest.raises(ValueError, match="not a binary_sensor"):
+            BinarySensorMatcher(PRESENCE)
+
+    def test_a_quiet_matcher_cannot_close_the_guaranteed_middle(self) -> None:
+        """The matcher decides `asleep`; the window decides what that closes.
+        A guest asleep till eleven costs the plant its early light, never its
+        guaranteed stretch."""
+        window = AwakeAwareWindow(
+            on_if_awake_after=time(6, 0),
+            on_after=time(9, 0),
+            on_even_if_asleep_until=time(17, 0),
+            on_until=time(19, 0),
+            quiet_when=BinarySensorMatcher(self.OUTPUT),
+        )
+        fixture = LightFixture(
+            name="study_shelf", switch_entity="switch.study_lamp", window=window
+        )
+        asleep = fixture.is_quiet({self.OUTPUT: "on"})
+        assert asleep
+        assert not window.is_on_at(time(7, 0), Weekday.MON, asleep=asleep)
+        assert window.is_on_at(time(10, 0), Weekday.MON, asleep=asleep)
+        assert not window.is_on_at(time(18, 0), Weekday.MON, asleep=asleep)
 
 
 class TestOnTimeDeviation:
@@ -338,7 +396,8 @@ class TestFixtureShape:
         fixed = LightFixture(
             name="spare_shelf", switch_entity="switch.spare_lamp", window=SPARE
         )
-        assert awake_aware.presence_entity == PRESENCE
+        assert awake_aware.watched_entities == (PRESENCE,)
         assert awake_aware.is_sleep_sensitive
-        assert fixed.presence_entity is None
+        assert fixed.watched_entities == ()
         assert not fixed.is_sleep_sensitive
+        assert not fixed.is_quiet({PRESENCE: "asleep"})

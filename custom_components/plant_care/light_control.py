@@ -2,7 +2,7 @@
 
 Two jobs, in one object because they share a subscription to the same switch:
 
-1. Re-evaluate the window every minute and whenever presence changes, and drive
+1. Re-evaluate the window every minute and whenever its sleepers change, and drive
    the switch when it disagrees.
 2. Count how long the switch was *actually* on, so the outcome can be compared
    against what the window allows. That is the half that catches a bulb that
@@ -35,7 +35,6 @@ from .model import (
     LightFixture,
     OnTimeDeviation,
     Weekday,
-    is_asleep,
     on_time_deviation,
 )
 from .model.health import HealthIssue, IssueKind
@@ -156,14 +155,15 @@ class LightController:
         self._unsubs.append(
             async_track_time_interval(self._hass, self._handle_tick, TICK_INTERVAL)
         )
-        # Presence changes are the other thing that can flip the answer, and
-        # waiting up to a minute to cut a lamp in a room somebody just went to
-        # sleep in is exactly the annoyance the window exists to avoid.
-        presence = self._fixture.presence_entity
-        if presence is not None:
+        # Whatever the window's matcher reads is the other thing that can flip
+        # the answer, and waiting up to a minute to cut a lamp somebody just
+        # went to sleep beside is exactly the annoyance the window exists to
+        # avoid.
+        watched = list(self._fixture.watched_entities)
+        if watched:
             self._unsubs.append(
                 async_track_state_change_event(
-                    self._hass, [presence], self._handle_presence
+                    self._hass, watched, self._handle_sleepers
                 )
             )
         # The switch, so on-time is credited at the transition rather than
@@ -226,7 +226,7 @@ class LightController:
         self._notify()
 
     @callback
-    def _handle_presence(self, _event: Event[EventStateChangedData]) -> None:
+    def _handle_sleepers(self, _event: Event[EventStateChangedData]) -> None:
         self.async_apply()
 
     @callback
@@ -243,11 +243,11 @@ class LightController:
     def should_be_on(self, now: datetime | None = None) -> bool:
         """What the window says, ignoring the killswitch."""
         now = now or dt_util.now()
-        asleep = False
-        presence = self._fixture.presence_entity
-        if presence is not None:
-            state = self._hass.states.get(presence)
-            asleep = is_asleep(state.state if state is not None else None)
+        states: dict[str, str | None] = {}
+        for entity_id in self._fixture.watched_entities:
+            state = self._hass.states.get(entity_id)
+            states[entity_id] = state.state if state is not None else None
+        asleep = self._fixture.is_quiet(states)
 
         return self._fixture.window.is_on_at(
             now.time(), Weekday.from_python(now.weekday()), asleep=asleep
