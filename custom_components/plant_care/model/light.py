@@ -63,6 +63,42 @@ def _overlap(start: time, end: time, since: time, until: time) -> int:
     return max(0, high - low)
 
 
+def _days_text(days: frozenset[Weekday] | None) -> str | None:
+    """`None` for every day; otherwise the days in week order, a run of three
+    or more collapsed to its ends: `Mon–Fri`, `Sat, Sun`."""
+    if days is None:
+        return None
+    ordered = [day for day in Weekday if day in days]
+    names = [day.value.title() for day in ordered]
+    indices = [list(Weekday).index(day) for day in ordered]
+    contiguous = all(b == a + 1 for a, b in pairwise(indices))
+    if contiguous and len(names) >= 3:
+        return f"{names[0]}–{names[-1]}"
+    return ", ".join(names)
+
+
+@dataclass(frozen=True)
+class ScheduledRange:
+    """One stretch of a window, described for a person rather than a check.
+
+    The dashboard shows these at the foot of each lamp's card. The times are
+    the config's own, so the card answers "when is this meant to be on" without
+    a trip to the YAML — and, next to the on-time sensor, "is 480 minutes
+    right" becomes something anyone can answer by eye.
+    """
+
+    label: str
+    start: time
+    end: time
+    days: frozenset[Weekday] | None = None
+
+    @property
+    def text(self) -> str:
+        span = f"{self.start:%H:%M}–{self.end:%H:%M}"
+        days = _days_text(self.days)
+        return span if days is None else f"{span} {days}"
+
+
 @dataclass(frozen=True)
 class FixedWindow:
     """A plain daily window. Nobody sleeps near this fixture.
@@ -105,6 +141,10 @@ class FixedWindow:
 
     def possible_minutes(self, since: time, until: time, day: Weekday) -> int:
         return self.guaranteed_minutes(since, until, day)
+
+    def schedule(self) -> tuple[ScheduledRange, ...]:
+        """One range: a fixed window has nothing conditional to describe."""
+        return (ScheduledRange("Schedule", self.start, self.end, self.days),)
 
 
 @dataclass(frozen=True)
@@ -188,12 +228,35 @@ class AwakeAwareWindow:
             return 0
         return _overlap(self.on_if_awake_after, self.on_until, since, until)
 
+    def schedule(self) -> tuple[ScheduledRange, ...]:
+        """The guaranteed stretch, then the widest it can open.
+
+        Two ranges rather than four times, because the pair is how the on-time
+        sensor's attributes already talk about this window, and a card that
+        listed four bounds would need the docstring above to read.
+        """
+        return (
+            ScheduledRange(
+                "Schedule (guaranteed)",
+                self.on_after,
+                self.on_even_if_asleep_until,
+                self.days,
+            ),
+            ScheduledRange(
+                "Schedule (if awake)",
+                self.on_if_awake_after,
+                self.on_until,
+                self.days,
+            ),
+        )
+
 
 LightWindow = FixedWindow | AwakeAwareWindow
 
-# Both window types answer `guaranteed_minutes` and `possible_minutes`, which is
-# what lets the on-time check work without knowing which kind it holds — and,
-# more importantly, without a record of who was awake when.
+# Both window types answer `guaranteed_minutes`, `possible_minutes` and
+# `schedule`, which is what lets the on-time check and the dashboard work
+# without knowing which kind they hold — and, more importantly, without a record
+# of who was awake when.
 #
 # Comparing against a *pair* of bounds rather than one expected number is the
 # whole trick. An awake-aware window's real on-time depends on presence history

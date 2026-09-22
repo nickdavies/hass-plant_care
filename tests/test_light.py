@@ -117,6 +117,60 @@ class TestAwakeAwareWindow:
         assert weekend.possible_minutes(time(0, 0), time(23, 59), Weekday.MON) == 0
 
 
+class TestSchedule:
+    """What the dashboard prints at the foot of a lamp's card."""
+
+    def test_a_fixed_window_is_one_range(self) -> None:
+        (only,) = SPARE.schedule()
+        assert only.label == "Schedule"
+        assert only.text == "07:00–19:00"
+
+    def test_an_awake_aware_window_is_the_guaranteed_then_the_possible(
+        self,
+    ) -> None:
+        """The same pair the on-time sensor's attributes are stated in, so the
+        card and the sensor describe the window the same way."""
+        guaranteed, possible = STUDY.schedule()
+        assert guaranteed.label == "Schedule (guaranteed)"
+        assert guaranteed.text == "09:00–17:00"
+        assert possible.label == "Schedule (if awake)"
+        assert possible.text == "06:00–19:00"
+
+    def test_every_day_says_nothing_about_days(self) -> None:
+        assert "Mon" not in SPARE.schedule()[0].text
+
+    def test_a_run_of_days_collapses_to_its_ends(self) -> None:
+        weekdays = FixedWindow(
+            start=time(7, 0),
+            end=time(19, 0),
+            days=frozenset(
+                {Weekday.MON, Weekday.TUE, Weekday.WED, Weekday.THU, Weekday.FRI}
+            ),
+        )
+        assert weekdays.schedule()[0].text == "07:00–19:00 Mon–Fri"
+
+    def test_scattered_days_are_listed_in_week_order(self) -> None:
+        """Two days are listed, not collapsed: `Sat–Sun` reads as a range that
+        might hide something between."""
+        weekend = AwakeAwareWindow(
+            on_if_awake_after=time(6, 0),
+            on_after=time(9, 0),
+            on_even_if_asleep_until=time(17, 0),
+            on_until=time(19, 0),
+            presence_entity=PRESENCE,
+            days=frozenset({Weekday.SUN, Weekday.SAT}),
+        )
+        assert weekend.schedule()[0].text == "09:00–17:00 Sat, Sun"
+        assert weekend.schedule()[1].text == "06:00–19:00 Sat, Sun"
+
+        odd = FixedWindow(
+            start=time(7, 0),
+            end=time(19, 0),
+            days=frozenset({Weekday.FRI, Weekday.MON, Weekday.WED}),
+        )
+        assert odd.schedule()[0].text == "07:00–19:00 Mon, Wed, Fri"
+
+
 class TestWindowInvariants:
     """Ordering is a property of the window, not something a later pass
     checks, so a window that does not run forward cannot be constructed."""
