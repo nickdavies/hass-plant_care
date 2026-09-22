@@ -15,11 +15,13 @@ import voluptuous as vol
 
 from custom_components.plant_care.model import (
     AwakeAwareWindow,
+    BinarySensorMatcher,
     Calibrated,
     Calibrating,
     FixedWindow,
     InvalidPlantConfig,
     Lit,
+    PresenceMatcher,
     Weekday,
     parse,
     schema,
@@ -523,11 +525,11 @@ class TestFixtures:
 
 
 class TestWindows:
-    def test_an_awake_aware_window_carries_its_presence_entity(self) -> None:
+    def test_presence_is_shorthand_for_a_presence_matcher(self) -> None:
         config = load_config(LIT_PLANT, lights=[STUDY_LIGHT], lux=[STUDY_LUX])
         window = config.light("study_shelf").window
         assert isinstance(window, AwakeAwareWindow)
-        assert window.presence_entity == "sensor.person_presence_nick"
+        assert window.quiet_when == PresenceMatcher("sensor.person_presence_nick")
         assert window.on_if_awake_after == time(6, 0)
         assert window.on_until == time(19, 0)
         assert config.light("study_shelf").is_sleep_sensitive
@@ -539,7 +541,7 @@ class TestWindows:
         assert isinstance(window, FixedWindow)
         assert window.start == time(7, 0)
         assert window.days is None  # every day
-        assert config.light("study_shelf").presence_entity is None
+        assert config.light("study_shelf").watched_entities == ()
 
     def test_a_window_must_pick_exactly_one_shape(self) -> None:
         both = {
@@ -554,6 +556,60 @@ class TestWindows:
 
         neither = {**STUDY_LIGHT, "window": {}}
         with pytest.raises(vol.Invalid, match="fixed.*awake_aware"):
+            load_config(LIT_PLANT, lights=[neither], lux=[STUDY_LUX])
+
+    @staticmethod
+    def _study_with(**sleepers: Any) -> dict[str, Any]:
+        spec = dict(STUDY_LIGHT["window"]["awake_aware"])
+        del spec["presence"]
+        return {**STUDY_LIGHT, "window": {"awake_aware": {**spec, **sleepers}}}
+
+    def test_quiet_when_takes_a_presence_matcher(self) -> None:
+        light = self._study_with(quiet_when={"presence": "sensor.group_presence_x"})
+        config = load_config(LIT_PLANT, lights=[light], lux=[STUDY_LUX])
+        window = config.light("study_shelf").window
+        assert isinstance(window, AwakeAwareWindow)
+        assert window.quiet_when == PresenceMatcher("sensor.group_presence_x")
+
+    def test_quiet_when_takes_a_binary_sensor(self) -> None:
+        entity = "binary_sensor.presence_output_everyone_any_asleep"
+        light = self._study_with(quiet_when={"binary_sensor": entity})
+        config = load_config(LIT_PLANT, lights=[light], lux=[STUDY_LUX])
+        window = config.light("study_shelf").window
+        assert isinstance(window, AwakeAwareWindow)
+        assert window.quiet_when == BinarySensorMatcher(entity)
+        assert config.light("study_shelf").watched_entities == (entity,)
+
+    def test_a_binary_sensor_matcher_must_name_a_binary_sensor(self) -> None:
+        """A presence sensor read as on/off would never be `on`, so the lamp
+        would ignore everybody's sleep without a word."""
+        light = self._study_with(
+            quiet_when={"binary_sensor": "sensor.person_presence_nick"}
+        )
+        with pytest.raises(vol.Invalid, match="study_shelf.*not a binary_sensor"):
+            load_config(LIT_PLANT, lights=[light], lux=[STUDY_LUX])
+
+    def test_presence_and_quiet_when_are_exclusive(self) -> None:
+        light = self._study_with(
+            presence="sensor.person_presence_nick",
+            quiet_when={"binary_sensor": "binary_sensor.x"},
+        )
+        with pytest.raises(vol.Invalid, match="shorthand"):
+            load_config(LIT_PLANT, lights=[light], lux=[STUDY_LUX])
+
+    def test_an_awake_aware_window_must_say_whose_sleep(self) -> None:
+        with pytest.raises(vol.Invalid, match="whose sleep"):
+            load_config(LIT_PLANT, lights=[self._study_with()], lux=[STUDY_LUX])
+
+    def test_quiet_when_names_exactly_one_matcher(self) -> None:
+        both = self._study_with(
+            quiet_when={"presence": "sensor.p", "binary_sensor": "binary_sensor.x"}
+        )
+        with pytest.raises(vol.Invalid, match="exactly one matcher"):
+            load_config(LIT_PLANT, lights=[both], lux=[STUDY_LUX])
+
+        neither = self._study_with(quiet_when={})
+        with pytest.raises(vol.Invalid, match="presence.*binary_sensor"):
             load_config(LIT_PLANT, lights=[neither], lux=[STUDY_LUX])
 
     def test_a_half_written_window_is_rejected(self) -> None:

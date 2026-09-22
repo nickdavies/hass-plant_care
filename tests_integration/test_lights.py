@@ -9,6 +9,7 @@ the feed.
 
 from __future__ import annotations
 
+import copy
 from typing import Any
 
 from freezegun.api import FrozenDateTimeFactory
@@ -17,6 +18,7 @@ from homeassistant.core import HomeAssistant, callback
 
 from .conftest import (
     DOMAIN,
+    LIGHT_CONFIG,
     PRESENCE,
     SPARE_SWITCH,
     STUDY_KILLSWITCH,
@@ -200,6 +202,84 @@ class TestPresenceGating:
         await start(hass, freezer, at(7, 0))
 
         hass.states.async_set(PRESENCE, "unavailable")
+        await hass.async_block_till_done()
+
+        assert targets(recorded, STUDY_SWITCH) == ["turn_on"]
+
+
+QUIET_OUTPUT = "binary_sensor.presence_output_everyone_any_asleep"
+
+
+def quiet_output_config() -> dict[str, Any]:
+    """The study lamp answering to a binary sensor instead of one person."""
+    config = copy.deepcopy(LIGHT_CONFIG)
+    window = config[DOMAIN]["lights"][0]["window"]["awake_aware"]
+    del window["presence"]
+    window["quiet_when"] = {"binary_sensor": QUIET_OUTPUT}
+    return config
+
+
+class TestBinarySensorGating:
+    """A guest asleep while Nick is up: the case a presence sensor cannot say,
+    and the reason matchers are pluggable."""
+
+    async def test_the_early_stretch_waits_while_the_output_is_on(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        hass.states.async_set(QUIET_OUTPUT, STATE_ON)
+        recorded = record_switch_calls(hass)
+        await start(hass, freezer, at(7, 0), quiet_output_config())
+
+        assert targets(recorded, STUDY_SWITCH) == []
+
+        hass.states.async_set(QUIET_OUTPUT, STATE_OFF)
+        await hass.async_block_till_done()
+
+        assert targets(recorded, STUDY_SWITCH) == ["turn_on"]
+
+    async def test_the_output_turning_on_closes_the_tail_at_once(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        hass.states.async_set(QUIET_OUTPUT, STATE_OFF)
+        hass.states.async_set(STUDY_SWITCH, STATE_ON)
+        await start(hass, freezer, at(18, 0), quiet_output_config())
+        recorded = record_switch_calls(hass)
+
+        hass.states.async_set(QUIET_OUTPUT, STATE_ON)
+        await hass.async_block_till_done()
+
+        assert targets(recorded, STUDY_SWITCH) == ["turn_off"]
+
+    async def test_the_guaranteed_middle_ignores_the_output(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        hass.states.async_set(QUIET_OUTPUT, STATE_ON)
+        recorded = record_switch_calls(hass)
+        await start(hass, freezer, at(12, 0), quiet_output_config())
+
+        assert targets(recorded, STUDY_SWITCH) == ["turn_on"]
+
+    async def test_the_person_sensor_no_longer_matters(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        hass.states.async_set(QUIET_OUTPUT, STATE_OFF)
+        hass.states.async_set(STUDY_SWITCH, STATE_ON)
+        await start(hass, freezer, at(18, 0), quiet_output_config())
+        recorded = record_switch_calls(hass)
+
+        hass.states.async_set(PRESENCE, "asleep")
+        await hass.async_block_till_done()
+
+        assert targets(recorded, STUDY_SWITCH) == []
+
+    async def test_an_unavailable_output_does_not_hold_the_lamp_off(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        hass.states.async_set(QUIET_OUTPUT, STATE_ON)
+        recorded = record_switch_calls(hass)
+        await start(hass, freezer, at(7, 0), quiet_output_config())
+
+        hass.states.async_set(QUIET_OUTPUT, "unavailable")
         await hass.async_block_till_done()
 
         assert targets(recorded, STUDY_SWITCH) == ["turn_on"]

@@ -11,7 +11,7 @@ two sets of fields must not be mixable.
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from datetime import time
 from enum import Enum
@@ -174,7 +174,9 @@ class AwakeAwareWindow:
     on_after: time
     on_even_if_asleep_until: time
     on_until: time
-    presence_entity: str
+    quiet_when: QuietMatcher
+    """Whose sleep closes the edges. Only the edges: the guaranteed middle is
+    the plant's, and no matcher can take it away."""
     days: frozenset[Weekday] | None = None
 
     def __post_init__(self) -> None:
@@ -282,10 +284,20 @@ class LightFixture:
         return isinstance(self.window, AwakeAwareWindow)
 
     @property
-    def presence_entity(self) -> str | None:
+    def watched_entities(self) -> tuple[str, ...]:
+        """What can flip this fixture's answer besides the clock."""
         if isinstance(self.window, AwakeAwareWindow):
-            return self.window.presence_entity
-        return None
+            return self.window.quiet_when.entity_ids
+        return ()
+
+    def is_quiet(self, states: Mapping[str, str | None]) -> bool:
+        """Whether the window's sleepers are asleep, given their states.
+
+        Always false for a fixed window, which has nobody to ask.
+        """
+        if isinstance(self.window, AwakeAwareWindow):
+            return self.window.quiet_when.is_quiet(states)
+        return False
 
 
 @dataclass(frozen=True)
@@ -431,3 +443,68 @@ def is_asleep(presence_state: str | None) -> bool:
     if UP_STATES & parts:
         return False
     return bool(DOWN_STATES & parts)
+
+
+# ---- Whose sleep counts ---------------------------------------------------
+#
+# A matcher answers one question — is somebody this lamp must not disturb
+# asleep — from the states of the entities it names. It is pluggable because
+# "somebody" differs by fixture: a lamp in a bedroom answers to whoever sleeps
+# there, one bright enough to light the house answers to the house.
+#
+# Each kind says which entities it reads, so the controller can subscribe to
+# them without knowing which kind it holds, and each fails the same way: a
+# state it does not recognise is not quiet, for `is_asleep`'s reason.
+
+
+@dataclass(frozen=True)
+class PresenceMatcher:
+    """A `light_motion_profiles` presence sensor, read directly.
+
+    Asleep only when nobody the sensor covers is up — a group sensor with one
+    member awake is not quiet. Needs nothing but the sensor, which is what
+    keeps it the default.
+    """
+
+    entity: str
+
+    @property
+    def entity_ids(self) -> tuple[str, ...]:
+        return (self.entity,)
+
+    def is_quiet(self, states: Mapping[str, str | None]) -> bool:
+        return is_asleep(states.get(self.entity))
+
+
+BINARY_ON = "on"
+
+
+@dataclass(frozen=True)
+class BinarySensorMatcher:
+    """Any binary sensor: on means quiet.
+
+    The rule deciding who counts lives wherever the sensor is defined —
+    typically a `light_motion_profiles` presence output, which can say "anyone
+    in the house asleep" where a presence sensor can only say "everyone". Only
+    `on` counts: off, `unknown` and `unavailable` all leave the lamp free,
+    because a broken rule must not starve a plant.
+    """
+
+    entity: str
+
+    def __post_init__(self) -> None:
+        if not self.entity.startswith("binary_sensor."):
+            raise ValueError(
+                f"'{self.entity}' is not a binary_sensor: a binary sensor matcher "
+                "reads on/off and nothing else"
+            )
+
+    @property
+    def entity_ids(self) -> tuple[str, ...]:
+        return (self.entity,)
+
+    def is_quiet(self, states: Mapping[str, str | None]) -> bool:
+        return states.get(self.entity) == BINARY_ON
+
+
+QuietMatcher = PresenceMatcher | BinarySensorMatcher

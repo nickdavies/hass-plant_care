@@ -37,10 +37,13 @@ import voluptuous as vol
 from .dli import Band, DliObjective
 from .light import (
     AwakeAwareWindow,
+    BinarySensorMatcher,
     FixedWindow,
     LightFixture,
     LightWindow,
     LuxFixture,
+    PresenceMatcher,
+    QuietMatcher,
     Weekday,
 )
 from .owners import Owner, Owners
@@ -95,6 +98,8 @@ FIELD_DAYS = "days"
 FIELD_FROM = "from"
 FIELD_TO = "to"
 FIELD_PRESENCE = "presence"
+FIELD_QUIET_WHEN = "quiet_when"
+FIELD_BINARY_SENSOR = "binary_sensor"
 FIELD_ON_IF_AWAKE_AFTER = "on_if_awake_after"
 FIELD_ON_AFTER = "on_after"
 FIELD_ON_EVEN_IF_ASLEEP_UNTIL = "on_even_if_asleep_until"
@@ -272,19 +277,62 @@ def _fixed_window_schema() -> vol.Schema:
     )
 
 
+def _exactly_one_matcher(value: Mapping[str, Any]) -> Mapping[str, Any]:
+    if not value:
+        raise vol.Invalid(
+            f"{FIELD_QUIET_WHEN} must be one of '{FIELD_PRESENCE}' or "
+            f"'{FIELD_BINARY_SENSOR}'"
+        )
+    return value
+
+
+def _quiet_when_schema() -> vol.Schema:
+    # Another one-key sum type, for the same reason as the window: each matcher
+    # kind reads its entity differently, so the kind has to be stated.
+    msg = "a quiet_when names exactly one matcher"
+    return vol.All(
+        vol.Schema(
+            {
+                vol.Exclusive(FIELD_PRESENCE, "matcher", msg=msg): _entity_id,
+                vol.Exclusive(FIELD_BINARY_SENSOR, "matcher", msg=msg): _entity_id,
+            }
+        ),
+        _exactly_one_matcher,
+    )
+
+
+def _whose_sleep_is_stated(value: Mapping[str, Any]) -> Mapping[str, Any]:
+    if FIELD_PRESENCE not in value and FIELD_QUIET_WHEN not in value:
+        raise vol.Invalid(
+            f"an awake_aware window needs '{FIELD_PRESENCE}' or "
+            f"'{FIELD_QUIET_WHEN}': whose sleep it answers to"
+        )
+    return value
+
+
 def _awake_aware_window_schema() -> vol.Schema:
-    # The presence entity lives here and only here: a fixed window has nowhere
-    # to put one, so a fixture cannot claim sleep-sensitivity without saying
-    # whose sleep, and cannot name a sleeper it will never consult.
-    return vol.Schema(
-        {
-            vol.Optional(FIELD_DAYS): vol.All([_weekday], vol.Length(min=1)),
-            vol.Required(FIELD_PRESENCE): _entity_id,
-            vol.Required(FIELD_ON_IF_AWAKE_AFTER): _time_of_day,
-            vol.Required(FIELD_ON_AFTER): _time_of_day,
-            vol.Required(FIELD_ON_EVEN_IF_ASLEEP_UNTIL): _time_of_day,
-            vol.Required(FIELD_ON_UNTIL): _time_of_day,
-        }
+    # Whose sleep lives here and only here: a fixed window has nowhere to put
+    # it, so a fixture cannot claim sleep-sensitivity without saying whose
+    # sleep, and cannot name a sleeper it will never consult.
+    #
+    # `presence` is shorthand for `quiet_when: {presence: ...}` — the case that
+    # needs no other component's rules — so it stays the short spelling.
+    msg = f"'{FIELD_PRESENCE}' is shorthand for a '{FIELD_QUIET_WHEN}'; give one"
+    return vol.All(
+        vol.Schema(
+            {
+                vol.Optional(FIELD_DAYS): vol.All([_weekday], vol.Length(min=1)),
+                vol.Exclusive(FIELD_PRESENCE, "sleepers", msg=msg): _entity_id,
+                vol.Exclusive(
+                    FIELD_QUIET_WHEN, "sleepers", msg=msg
+                ): _quiet_when_schema(),
+                vol.Required(FIELD_ON_IF_AWAKE_AFTER): _time_of_day,
+                vol.Required(FIELD_ON_AFTER): _time_of_day,
+                vol.Required(FIELD_ON_EVEN_IF_ASLEEP_UNTIL): _time_of_day,
+                vol.Required(FIELD_ON_UNTIL): _time_of_day,
+            }
+        ),
+        _whose_sleep_is_stated,
     )
 
 
@@ -543,6 +591,15 @@ def _parse_owners(data: Mapping[str, Any]) -> Owners:
 # ---- Fixtures -----------------------------------------------------------
 
 
+def _parse_quiet_when(spec: Mapping[str, Any]) -> QuietMatcher:
+    if FIELD_PRESENCE in spec:
+        return PresenceMatcher(spec[FIELD_PRESENCE])
+    matcher = spec[FIELD_QUIET_WHEN]
+    if FIELD_PRESENCE in matcher:
+        return PresenceMatcher(matcher[FIELD_PRESENCE])
+    return BinarySensorMatcher(matcher[FIELD_BINARY_SENSOR])
+
+
 def _parse_window(data: Mapping[str, Any], fixture: str) -> LightWindow:
     try:
         if FIELD_FIXED in data:
@@ -558,7 +615,7 @@ def _parse_window(data: Mapping[str, Any], fixture: str) -> LightWindow:
             on_after=spec[FIELD_ON_AFTER],
             on_even_if_asleep_until=spec[FIELD_ON_EVEN_IF_ASLEEP_UNTIL],
             on_until=spec[FIELD_ON_UNTIL],
-            presence_entity=spec[FIELD_PRESENCE],
+            quiet_when=_parse_quiet_when(spec),
             days=frozenset(spec[FIELD_DAYS]) if FIELD_DAYS in spec else None,
         )
     except ValueError as err:
