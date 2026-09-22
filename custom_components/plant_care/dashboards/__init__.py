@@ -43,6 +43,17 @@ def overview(entity: Entity) -> str:
 
 NOTHING_YET = "### No plants are yours yet"
 
+
+def text_row(name: str, text: str, icon: str) -> dict[str, str]:
+    """A row inside an EntitiesCard showing a fixed string rather than an entity.
+
+    Lives here rather than in `lovelace.py` because that file is vendored byte
+    for byte with light_motion_profiles, and this is the only dashboard that
+    needs it. Move it there the day the second one does.
+    """
+    return {"type": "text", NAME: name, "text": text, ICON: icon}
+
+
 CALIBRATING = """### {display} — calibrating
 
 No watering threshold yet, by design: one would be a number nobody measured.
@@ -142,6 +153,12 @@ class PlantsDashboard(GeneratedDashboard):
         fixture is a decision about the plants under it, and the on-time figure
         is the only thing on the dashboard that will tell you what that decision
         actually did.
+
+        The schedule closes the card, as plain text rows rather than entities:
+        it is config, not state, and an entity that only ever repeated the YAML
+        would be one more thing to keep in step with it. Next to the on-time
+        figure it is what makes that figure readable — 480 minutes is a full
+        day under one window and a lamp stuck on under another.
         """
         rows: list[str | dict[str, str]] = [
             {
@@ -160,6 +177,10 @@ class PlantsDashboard(GeneratedDashboard):
                 ICON: "mdi:hand-back-left",
             },
         ]
+        rows.extend(
+            text_row(scheduled.label, scheduled.text, "mdi:clock-outline")
+            for scheduled in fixture.window.schedule()
+        )
         title = f"{fixture.name.replace('_', ' ').title()} lamp"
         return EntitiesCard(title=title, entities=rows)
 

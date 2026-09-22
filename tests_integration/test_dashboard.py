@@ -250,6 +250,44 @@ class TestLightContent:
         assert STUDY_KILLSWITCH in ids
         assert STUDY_ON_MINUTES in ids
 
+    async def test_each_fixture_card_ends_with_its_schedule(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """Next to the on-time figure, the window is what makes it readable.
+
+        Plain text rows, not entities: the schedule is config, and the card
+        prints the config's own times.
+        """
+        await start(hass, freezer, at(12, 0))
+        views = await _views(hass)
+        cards = views["all"]["cards"][0]["cards"]
+        by_title = {card.get("title"): card for card in cards}
+
+        study = by_title["Study Shelf lamp"]["entities"]
+        assert study[-2:] == [
+            {
+                "type": "text",
+                "name": "Schedule (guaranteed)",
+                "text": "09:00–17:00",
+                "icon": "mdi:clock-outline",
+            },
+            {
+                "type": "text",
+                "name": "Schedule (if awake)",
+                "text": "06:00–19:00",
+                "icon": "mdi:clock-outline",
+            },
+        ]
+        assert study[-3]["entity"] == STUDY_KILLSWITCH
+
+        spare = by_title["Spare Shelf lamp"]["entities"]
+        assert spare[-1] == {
+            "type": "text",
+            "name": "Schedule",
+            "text": "07:00–19:00",
+            "icon": "mdi:clock-outline",
+        }
+
     async def test_a_measured_plant_shows_its_band_on_the_row(
         self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
     ) -> None:
