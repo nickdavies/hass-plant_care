@@ -15,7 +15,6 @@ from homeassistant.core import HomeAssistant
 from homeassistant.loader import DATA_CUSTOM_COMPONENTS
 from homeassistant.setup import async_setup_component
 
-from custom_components.plant_care.lovelace import MarkdownCard, View
 from custom_components.plant_care.model.owners import DEFAULT_PERSON_ICON
 
 from .conftest import (
@@ -170,17 +169,6 @@ class TestPersonTabs:
 
 
 class TestViewShape:
-    def test_path_and_icon_render_only_when_given(self) -> None:
-        """The vendored library addition, pinned here so it can be ported."""
-        bare = View(title="T", cards=[MarkdownCard("x")]).render()
-        assert "path" not in bare and "icon" not in bare
-
-        tab = View(
-            title="T", cards=[MarkdownCard("x")], path="nick", icon="mdi:account"
-        ).render()
-        assert tab["path"] == "nick"
-        assert tab["icon"] == "mdi:account"
-
     async def test_a_calibrating_plant_says_so_on_its_card(
         self, integration: HomeAssistant
     ) -> None:

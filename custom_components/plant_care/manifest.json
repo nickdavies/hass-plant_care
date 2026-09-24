@@ -3,7 +3,7 @@
   "name": "Plant Care",
   "documentation": "https://github.com/nickdavies/hass-plant_care",
   "codeowners": ["@nickdavies"],
-  "dependencies": ["lovelace"],
+  "dependencies": ["lovelace", "lovelace_codegen"],
   "iot_class": "local_polling",
   "version": "0.1.0"
 }

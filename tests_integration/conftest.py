@@ -10,6 +10,7 @@ notice, and that the config is rejected loudly when it should be.
 from __future__ import annotations
 
 import pathlib
+import sys
 from datetime import datetime, timedelta
 from typing import Any
 
@@ -236,8 +237,17 @@ def mock_phones(hass: HomeAssistant) -> dict[str, list[ServiceCall]]:
     return {name: async_mock_service(hass, "notify", name) for name in NOTIFY_ACTIONS}
 
 
+REPO_ROOT = pathlib.Path(__file__).parent.parent
+
+# The `lovelace_codegen` component the dashboard is built with. It is its own
+# repo, installed beside this one in Home Assistant; CI checks out the version
+# it tests against here.
+LOVELACE_CODEGEN = REPO_ROOT / ".deps" / "hass-lovelace_codegen"
+
+
 def _ensure_custom_components_path() -> None:
-    """Put this project's custom_components on the namespace path.
+    """Put this project's custom_components, and its dependency's, on the
+    namespace path.
 
     pytest-homeassistant-custom-component points the `custom_components`
     namespace package at its own testing_config directory, so without this the
@@ -245,9 +255,15 @@ def _ensure_custom_components_path() -> None:
     """
     import custom_components
 
-    project_cc = str(pathlib.Path(__file__).parent.parent / "custom_components")
-    if project_cc not in custom_components.__path__:
-        custom_components.__path__.insert(0, project_cc)
+    for root in (REPO_ROOT, LOVELACE_CODEGEN):
+        path = str(root / "custom_components")
+        if path in custom_components.__path__:
+            continue
+        if isinstance(custom_components.__path__, list):
+            custom_components.__path__.insert(0, path)
+        else:
+            # A namespace package, whose path follows sys.path.
+            sys.path.insert(0, str(root))
 
 
 @pytest.fixture
