@@ -83,7 +83,10 @@ class FeedNotifier:
         )
         self._unsubs.append(
             async_track_time_interval(
-                self._hass, self._handle_interval, RECOMPUTE_INTERVAL
+                self._hass,
+                self._handle_interval,
+                RECOMPUTE_INTERVAL,
+                cancel_on_shutdown=True,
             )
         )
         for coordinator in self._data.coordinators.values():

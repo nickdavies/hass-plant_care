@@ -153,7 +153,9 @@ class LightController:
         self._restore(dt_util.now())
 
         self._unsubs.append(
-            async_track_time_interval(self._hass, self._handle_tick, TICK_INTERVAL)
+            async_track_time_interval(
+                self._hass, self._handle_tick, TICK_INTERVAL, cancel_on_shutdown=True
+            )
         )
         # Whatever the window's matcher reads is the other thing that can flip
         # the answer, and waiting up to a minute to cut a lamp somebody just
