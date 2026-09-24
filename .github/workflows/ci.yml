@@ -35,6 +35,13 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        # lovelace_codegen's main, not a pinned commit: what deploys is pinned
+        # by hass-configs, so this is here to catch a library change that
+        # breaks this component before that pin moves.
+        with:
+          repository: nickdavies/hass-lovelace_codegen
+          path: .deps/hass-lovelace_codegen
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"

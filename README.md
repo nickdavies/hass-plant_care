@@ -113,7 +113,6 @@ custom_components/plant_care/
 ├── feed.py             what "outstanding" means, in one place
 ├── notifier.py         pushes each new feed item once, to its owner's action
 ├── store.py            durable events, flags, killswitch stamps, DLI history
-├── lovelace.py         dashboard-from-code, vendored from light_motion_profiles
 └── sensor.py, binary_sensor.py, button.py, switch.py, dashboards/
 ```
 
@@ -127,11 +126,22 @@ the entire `homeassistant` package in `tests/conftest.py` to achieve the same
 thing. Keeping the imports out in the first place seemed better than mocking
 them away.
 
+The dashboard is built with
+[`lovelace_codegen`](https://github.com/nickdavies/hass-lovelace_codegen), a
+separate custom component that must be installed alongside this one.
+
 ## Tests
 
 ```bash
 python -m pytest tests/ -c tests/pytest.ini          # no HA needed
 python -m pytest tests_integration/                  # needs pytest-homeassistant-custom-component
+```
+
+The integration tests also need `lovelace_codegen`, checked out at
+`.deps/hass-lovelace_codegen`. CI uses its `main`:
+
+```bash
+git clone https://github.com/nickdavies/hass-lovelace_codegen .deps/hass-lovelace_codegen
 ```
 
 ## Design notes worth knowing

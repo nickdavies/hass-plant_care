@@ -10,7 +10,7 @@ from __future__ import annotations
 from collections.abc import Sequence
 from string import Template
 
-from ..lovelace import (
+from custom_components.lovelace_codegen import (
     DBT,
     ENTITY,
     ICON,
@@ -25,6 +25,7 @@ from ..lovelace import (
     View,
     divider,
 )
+
 from ..model import Calibrated, Entity, LightFixture, Plant, PlantCareConfig, naming
 
 # The list arrives already rendered, in `model/markdown.py`. This card is not
@@ -47,9 +48,8 @@ NOTHING_YET = "### No plants are yours yet"
 def text_row(name: str, text: str, icon: str) -> dict[str, str]:
     """A row inside an EntitiesCard showing a fixed string rather than an entity.
 
-    Lives here rather than in `lovelace.py` because that file is vendored byte
-    for byte with light_motion_profiles, and this is the only dashboard that
-    needs it. Move it there the day the second one does.
+    Lives here rather than in `lovelace_codegen` because this is the only
+    dashboard that needs it. Move it there the day the second one does.
     """
     return {"type": "text", NAME: name, "text": text, ICON: icon}
 
