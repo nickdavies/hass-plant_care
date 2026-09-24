@@ -135,7 +135,9 @@ class DliCoordinator:
 
         self._sample()
         self._unsubs.append(
-            async_track_time_interval(self._hass, self._handle_tick, SAMPLE_INTERVAL)
+            async_track_time_interval(
+                self._hass, self._handle_tick, SAMPLE_INTERVAL, cancel_on_shutdown=True
+            )
         )
         self._notify()
 

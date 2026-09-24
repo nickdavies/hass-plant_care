@@ -37,6 +37,9 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.13"
-      - run: pip install pytest pytest-homeassistant-custom-component voluptuous tzdata
+          python-version: "3.14"
+      # This release installs Home Assistant 2026.9.2, the version homelab
+      # deploys. Each release pins exactly one Home Assistant version, so move
+      # this whenever homelab's does.
+      - run: pip install pytest pytest-homeassistant-custom-component==0.13.365 voluptuous tzdata
       - run: python -m pytest tests_integration/ -v -c tests_integration/pytest.ini

@@ -76,7 +76,10 @@ class CareDueBinarySensor(PlantEntity, BinarySensorEntity):
         )
         self.async_on_remove(
             async_track_time_interval(
-                self.hass, self._handle_interval, RECOMPUTE_INTERVAL
+                self.hass,
+                self._handle_interval,
+                RECOMPUTE_INTERVAL,
+                cancel_on_shutdown=True,
             )
         )
 
