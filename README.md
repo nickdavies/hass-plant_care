@@ -113,6 +113,7 @@ custom_components/plant_care/
 ├── feed.py             what "outstanding" means, in one place
 ├── notifier.py         pushes each new feed item once, to its owner's action
 ├── store.py            durable events, flags, killswitch stamps, DLI history
+├── claims.py           pins every entity through the config bridge
 └── sensor.py, binary_sensor.py, button.py, switch.py, dashboards/
 ```
 
@@ -130,6 +131,12 @@ The dashboard is built with
 [`lovelace_codegen`](https://github.com/nickdavies/hass-lovelace_codegen), a
 separate custom component that must be installed alongside this one.
 
+Every entity is claimed with the
+[config bridge](https://github.com/nickdavies/hass-config_bridge), when it is
+set up, so UI changes to them (a rename, an area, hiding one) are put back at
+every boot and what they are stays in git. Without the bridge the entities
+work the same, and setup logs a warning that UI changes are kept.
+
 ## Tests
 
 ```bash
@@ -137,11 +144,12 @@ python -m pytest tests/ -c tests/pytest.ini          # no HA needed
 python -m pytest tests_integration/                  # needs pytest-homeassistant-custom-component
 ```
 
-The integration tests also need `lovelace_codegen`, checked out at
-`.deps/hass-lovelace_codegen`. CI uses its `main`:
+The integration tests also need `lovelace_codegen` and the config bridge,
+checked out under `.deps/`. CI uses their `main`:
 
 ```bash
 git clone https://github.com/nickdavies/hass-lovelace_codegen .deps/hass-lovelace_codegen
+git clone https://github.com/nickdavies/hass-config_bridge .deps/hass-config_bridge
 ```
 
 ## Design notes worth knowing

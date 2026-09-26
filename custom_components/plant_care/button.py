@@ -23,6 +23,7 @@ from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.util import dt as dt_util
 
+from .claims import add_and_claim
 from .const import ATTR_PLANT, ATTR_TASK, DOMAIN, SIGNAL_CARE_UPDATED
 from .entity import PlantEntity
 from .model import CareTask, Plant, naming
@@ -41,10 +42,15 @@ async def async_setup_platform(
         return
 
     data = hass.data[DOMAIN]
-    async_add_entities(
-        CareDoneButton(plant, task, data.event_log)
-        for plant in data.plants
-        for task in plant.care
+    add_and_claim(
+        hass,
+        "button",
+        async_add_entities,
+        (
+            CareDoneButton(plant, task, data.event_log)
+            for plant in data.plants
+            for task in plant.care
+        ),
     )
 
 

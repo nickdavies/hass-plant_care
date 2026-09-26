@@ -19,6 +19,7 @@ from homeassistant.core import HomeAssistant, callback
 from homeassistant.helpers.entity_platform import AddEntitiesCallback
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 
+from .claims import add_and_claim
 from .const import DOMAIN
 from .entity import FixtureEntity
 from .light_control import LightController
@@ -35,8 +36,11 @@ async def async_setup_platform(
         return
 
     data = hass.data[DOMAIN]
-    async_add_entities(
-        LightKillswitch(controller) for controller in data.light_controllers.values()
+    add_and_claim(
+        hass,
+        "switch",
+        async_add_entities,
+        (LightKillswitch(controller) for controller in data.light_controllers.values()),
     )
 
 
