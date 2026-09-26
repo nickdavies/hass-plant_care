@@ -12,6 +12,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.util import dt as dt_util
 
+from .claims import add_and_claim
 from .const import (
     ATTR_ITEMS,
     ATTR_MARKDOWN,
@@ -71,7 +72,7 @@ async def async_setup_platform(
     entities.extend(
         PersonOutstandingSensor(data, person) for person in data.config.owners.people()
     )
-    async_add_entities(entities)
+    add_and_claim(hass, "sensor", async_add_entities, entities)
 
 
 class _CareDrivenSensor(PlantEntity, SensorEntity):
