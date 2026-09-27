@@ -63,6 +63,16 @@ class Direction(Enum):
     BOTH = "both"
 
 
+DEFAULT_WINDOW_DAYS = 28
+"""How many days of history an objective judges over, and how many days a plant
+with no objective keeps anyway.
+
+Both spellings have to be the same number or a plant that gains an objective
+later would find its history already trimmed to something shorter than the
+window it now wants to judge over.
+"""
+
+
 @dataclass(frozen=True)
 class DliObjective:
     """What "enough light" means for one plant."""
@@ -70,7 +80,7 @@ class DliObjective:
     category: str
     preferred: Band
     survival: Band | None = None
-    window_days: int = 28
+    window_days: int = DEFAULT_WINDOW_DAYS
     budget: float = 20.0
     preferred_overridden: bool = False
 

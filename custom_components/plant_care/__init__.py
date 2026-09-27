@@ -83,8 +83,10 @@ class PlantCareData:
     light_controllers: Mapping[str, LightController]
     """Keyed by *fixture* name — a fixture is shared, so it is not per plant."""
     dli_coordinators: Mapping[str, DliCoordinator]
-    """Keyed by plant name. Only plants with both a lux fixture and an
-    objective have one; the pair is enforced at parse time."""
+    """Keyed by plant name. Every plant with a lux fixture has one — an
+    objective is what makes it judge, not what makes it measure. A plant with
+    an objective and no fixture is refused at parse time, so the reverse pair
+    cannot happen."""
 
     @property
     def plants(self) -> tuple[Plant, ...]:
@@ -147,7 +149,7 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
 
     dli_coordinators: dict[str, DliCoordinator] = {}
     for plant in plants:
-        if plant.dli is None or plant.lux is None:
+        if plant.lux is None:
             continue
         lux = parsed.lux(plant.lux)
         assert lux is not None  # cross-checked in `parse`
@@ -191,11 +193,12 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     )
 
     _LOGGER.debug(
-        "plant_care: loaded %d plants (%d with a probe, %d with a light budget) "
-        "and %d light fixtures",
+        "plant_care: loaded %d plants (%d with a probe, %d measuring light of "
+        "which %d judged against a budget) and %d light fixtures",
         len(plants),
         len(coordinators),
         len(dli_coordinators),
+        sum(1 for c in dli_coordinators.values() if c.objective is not None),
         len(light_controllers),
     )
 
