@@ -48,6 +48,7 @@ plant_care:
     foliage_tropical: { low: 4, high: 9 }
   lights:
     - name: study_shelf
+      area: nick_study                        # optional, on lights, lux sensors and plants
       switch: switch.nick_study_outlet_sansi_100w_lamp
       lux_to_ppfd: 0.0125
       window:
@@ -75,6 +76,7 @@ plant_care:
       care:
         - { task: feed, every_days: 14 }
     - name: monstera
+      area: nick_study
       owner: primary
       moisture:
         model: thirdreality_soil_gen2
@@ -134,8 +136,11 @@ separate custom component that must be installed alongside this one.
 Every entity is claimed with the
 [config bridge](https://github.com/nickdavies/hass-config_bridge), when it is
 set up, so UI changes to them (a rename, an area, hiding one) are put back at
-every boot and what they are stays in git. Without the bridge the entities
-work the same, and setup logs a warning that UI changes are kept.
+every boot and what they are stays in git. An entity goes in the `area` of
+its plant or fixture, if the config gives one (an area id, which must exist),
+and in no area of its own otherwise; the feed sensors belong to neither.
+Without the bridge the entities work the same, and setup logs a warning that
+UI changes are kept.
 
 ## Tests
 

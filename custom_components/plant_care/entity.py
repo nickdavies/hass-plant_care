@@ -31,6 +31,11 @@ class PlantEntity(HassEntity):
         self._attr_name = name
 
     @property
+    def area(self) -> str | None:
+        """The area its plant is in, which the config bridge puts it in."""
+        return self._plant.area
+
+    @property
     def device_info(self) -> DeviceInfo:
         return DeviceInfo(
             identifiers={(DOMAIN, self._plant.name)},
@@ -58,6 +63,11 @@ class FixtureEntity(HassEntity):
         self.entity_id = entity.full
         self._attr_unique_id = entity.full
         self._attr_name = name
+
+    @property
+    def area(self) -> str | None:
+        """The area its fixture is in, which the config bridge puts it in."""
+        return self._fixture.area
 
     @property
     def device_info(self) -> DeviceInfo:

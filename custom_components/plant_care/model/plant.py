@@ -210,6 +210,9 @@ class Plant:
     """Only ever set alongside `lux` — an objective nothing measures is checked
     at parse time, not tolerated."""
 
+    area: str | None = None
+    """The id of the Home Assistant area it is in."""
+
     @property
     def light_source(self) -> Lit | None:
         """Where this plant's light comes from.

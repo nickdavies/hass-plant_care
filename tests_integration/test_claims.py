@@ -2,7 +2,9 @@
 
 from __future__ import annotations
 
+import copy
 import logging
+from typing import Any
 
 import pytest
 from homeassistant.const import EVENT_HOMEASSISTANT_STARTED
@@ -14,19 +16,27 @@ from homeassistant.setup import async_setup_component
 
 from .conftest import (
     DOMAIN,
+    LIGHT_CONFIG,
     MONSTERA_RAW,
     PASSIONFRUIT_ATTENTION,
     PASSIONFRUIT_BATTERY,
     PASSIONFRUIT_FEED_DONE,
     PASSIONFRUIT_FEED_DUE,
     PASSIONFRUIT_RAW,
+    PRESENCE,
+    SPARE_SWITCH,
+    STUDY_KILLSWITCH,
+    STUDY_ON_MINUTES,
+    STUDY_SWITCH,
     TEST_CONFIG,
     _ensure_custom_components_path,
     mock_phones,
 )
 
 
-async def _boot(hass: HomeAssistant, *, bridge: bool = True) -> None:
+async def _boot(
+    hass: HomeAssistant, *, bridge: bool = True, config: dict[str, Any] = TEST_CONFIG
+) -> None:
     """A boot: the bridge (if any), then this component, then started.
 
     The bridge applies claims once Home Assistant has started, as it would
@@ -35,6 +45,12 @@ async def _boot(hass: HomeAssistant, *, bridge: bool = True) -> None:
     hass.states.async_set(PASSIONFRUIT_RAW, "60.0")
     hass.states.async_set(PASSIONFRUIT_BATTERY, "85")
     hass.states.async_set(MONSTERA_RAW, "50.0")
+    for entity_id, state in (
+        (STUDY_SWITCH, "off"),
+        (SPARE_SWITCH, "off"),
+        (PRESENCE, "awake"),
+    ):
+        hass.states.async_set(entity_id, state)
     mock_phones(hass)
 
     hass.set_state(CoreState.starting)
@@ -42,7 +58,7 @@ async def _boot(hass: HomeAssistant, *, bridge: bool = True) -> None:
     _ensure_custom_components_path()
     if bridge:
         assert await async_setup_component(hass, "config_bridge", {"config_bridge": {}})
-    assert await async_setup_component(hass, DOMAIN, TEST_CONFIG), "setup failed"
+    assert await async_setup_component(hass, DOMAIN, config), "setup failed"
     await hass.async_block_till_done()
     hass.set_state(CoreState.running)
     hass.bus.async_fire(EVENT_HOMEASSISTANT_STARTED)
@@ -99,3 +115,43 @@ async def test_without_the_bridge_nothing_is_claimed(
 
     assert "config_bridge isn't set up" in caplog.text
     assert "config_bridge_claims" not in hass.data
+
+
+def with_areas(
+    config: dict[str, Any], plants: dict[str, str], lights: dict[str, str]
+) -> dict[str, Any]:
+    """`config` with `area:` added to the named plants and grow lights."""
+    config = copy.deepcopy(config)
+    for plant in config[DOMAIN]["plants"]:
+        if plant["name"] in plants:
+            plant["area"] = plants[plant["name"]]
+    for light in config[DOMAIN].get("lights", []):
+        if light["name"] in lights:
+            light["area"] = lights[light["name"]]
+    return config
+
+
+async def test_a_plants_entities_go_in_its_area(hass: HomeAssistant) -> None:
+    ar.async_get(hass).async_create("Kitchen")
+
+    await _boot(hass, config=with_areas(TEST_CONFIG, {"passionfruit": "kitchen"}, {}))
+
+    registry = er.async_get(hass)
+    for entity_id in (
+        PASSIONFRUIT_ATTENTION,
+        PASSIONFRUIT_FEED_DUE,
+        PASSIONFRUIT_FEED_DONE,
+    ):
+        assert registry.async_get(entity_id).area_id == "kitchen", entity_id
+
+
+async def test_a_fixtures_entities_go_in_its_area(hass: HomeAssistant) -> None:
+    ar.async_get(hass).async_create("Nick Study")
+
+    await _boot(
+        hass, config=with_areas(LIGHT_CONFIG, {}, {"study_shelf": "nick_study"})
+    )
+
+    registry = er.async_get(hass)
+    assert registry.async_get(STUDY_KILLSWITCH).area_id == "nick_study"
+    assert registry.async_get(STUDY_ON_MINUTES).area_id == "nick_study"
