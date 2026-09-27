@@ -377,6 +377,21 @@ class TestCareTasks:
         (plant,) = load(SENSORLESS_PLANT)
         assert plant.care_task("water").every_days == 4
 
+    def test_only_the_task_a_probe_detects_stands_in_for_one(self) -> None:
+        """Carried from the task table's `detected_by`, so the overview can
+        show a scheduled watering where a probe's reading would go."""
+        (plant,) = load(
+            {
+                **SENSORLESS_PLANT,
+                "care": [
+                    {"task": "water", "every_days": 4},
+                    {"task": "feed", "every_days": 14},
+                ],
+            }
+        )
+        assert plant.care_task("water").stands_in_for_probe
+        assert not plant.care_task("feed").stands_in_for_probe
+
     def test_the_same_task_twice_names_the_plant(self) -> None:
         with pytest.raises(InvalidPlantConfig, match="front_step_pot.*more than once"):
             load(

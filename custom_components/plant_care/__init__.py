@@ -93,13 +93,15 @@ class PlantCareData:
 
 async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
     # Imported here rather than at module scope: see the module docstring.
+    from custom_components.lovelace_codegen import async_serve_card, register_fragments
     from homeassistant.exceptions import ServiceValidationError
     from homeassistant.helpers import config_validation as cv
     from homeassistant.helpers import discovery
     from homeassistant.helpers.storage import Store
     from homeassistant.util import dt as dt_util
 
-    from .dashboards import PlantsDashboard
+    from .dashboards import PlantsDashboard, fragments
+    from .dashboards.bars import CARD_JS
     from .dli import DliCoordinator
     from .light_control import LightController
     from .moisture import MoistureCoordinator
@@ -209,6 +211,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
             discovery.async_load_platform(hass, platform, DOMAIN, {}, config)
         )
 
+    # The fragments always, as well as the dashboard: they are how other
+    # dashboards show these cards. The bars card is this component's own, so it
+    # is served from here rather than by lovelace_codegen.
+    await async_serve_card(hass, f"/{DOMAIN}/bars-card.js", CARD_JS)
+    register_fragments(hass, DOMAIN, fragments(parsed))
     PlantsDashboard(parsed).add_to_hass(hass)
 
     return True

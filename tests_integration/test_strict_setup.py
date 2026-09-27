@@ -188,10 +188,10 @@ class TestTheEmptyConfig:
         assert state.state == "0"
         assert state.attributes["items"] == []
 
-    async def test_the_dashboard_still_renders_with_only_the_shared_tab(
+    async def test_the_dashboard_still_renders_with_only_the_shared_tabs(
         self, hass: HomeAssistant
     ) -> None:
         assert await _try_setup(hass, copy.deepcopy(EMPTY_CONFIG))
 
         config = await hass.data["lovelace"].dashboards["plants"].async_load(False)
-        assert [view["path"] for view in config["views"]] == ["all"]
+        assert [view["path"] for view in config["views"]] == ["all", "debug"]

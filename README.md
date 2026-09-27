@@ -133,6 +133,44 @@ The dashboard is built with
 [`lovelace_codegen`](https://github.com/nickdavies/hass-lovelace_codegen), a
 separate custom component that must be installed alongside this one.
 
+## The Plants dashboard
+
+`/plants` has an overview tab for everything and one per person, then **Lamps**
+(every grow light's switch, on-time, killswitch and schedule), then **Debug**
+(every plant's entities and graphs in full).
+
+An overview is one row of bars per plant, the outstanding feed, then graphs
+putting the plants side by side:
+
+- **Water**, the best measure there is: available water on the calibrated
+  scale (orange below the refill threshold), else the probe's own reading,
+  else the countdown to a scheduled watering.
+- **Light**, when anything measures or lights the plant: today's DLI towards
+  the top of the preferred band, orange until its bottom; else how much of
+  today's window each lamp over it has been on.
+- **One countdown per care task**, draining to its due date.
+
+The graphs are available water for the calibrated plants, and light as a
+percentage of each plant's preferred minimum
+(`sensor.plant_<name>_dli_target`), since the raw totals differ with what each
+plant wants.
+
+The bars are this component's own card, `custom:plant-care-bars`
+(`dashboards/bars-card.js`), served and loaded at setup, so no dashboard needs a
+resource entry for it.
+
+The cards are also offered as `lovelace_codegen` fragments, so a hand-written
+dashboard can embed them without copying them:
+
+```yaml
+type: custom:codegen-fragment
+source: plant_care
+fragment: overview   # optional param `person`
+```
+
+`plant` (one plant's bars) and `plant_detail` take a `plant`; `lamp` takes a
+`lamp`.
+
 Every entity is claimed with the
 [config bridge](https://github.com/nickdavies/hass-config_bridge), when it is
 set up, so UI changes to them (a rename, an area, hiding one) are put back at

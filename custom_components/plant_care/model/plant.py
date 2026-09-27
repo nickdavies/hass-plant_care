@@ -167,6 +167,9 @@ class CareTask:
     display: str
     icon: str
     every_days: int
+    stands_in_for_probe: bool = False
+    """What a calibrated moisture probe would detect for itself: watering.
+    Scheduled only where no calibrated probe exists."""
 
     def __post_init__(self) -> None:
         if self.every_days <= 0:

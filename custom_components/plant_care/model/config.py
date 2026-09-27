@@ -741,6 +741,9 @@ def _parse_care(
                 display=definition.display,
                 icon=definition.icon,
                 every_days=entry[FIELD_EVERY_DAYS],
+                stands_in_for_probe=(
+                    definition.detected_by == DETECTED_BY_CALIBRATED_MOISTURE
+                ),
             )
         )
     return tuple(care)
