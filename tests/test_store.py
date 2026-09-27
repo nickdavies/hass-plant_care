@@ -37,7 +37,7 @@ def run(coro: Coroutine[Any, Any, T]) -> T:
     """Drive one of `EventLog`'s coroutines to completion.
 
     The tests here are plain synchronous functions on purpose. This suite
-    installs nothing but pytest and voluptuous — that is what keeps
+    installs nothing but pytest and probatio — that is what keeps
     `test_no_ha_imports` meaningful — and an async test would need a plugin.
     `EventLog` is async only because `Store` is, so there is nothing to
     schedule around.

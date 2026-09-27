@@ -39,9 +39,14 @@ def _import_in_subprocess(module: str) -> subprocess.CompletedProcess[str]:
     A subprocess rather than an in-process check because by the time this test
     runs, another test in the same session may already have imported Home
     Assistant — `sys.modules` would then show it regardless of who pulled it in.
+
+    A fresh interpreter has not run conftest.py, so it aliases voluptuous
+    itself first.
     """
     code = (
         "import sys\n"
+        "from probatio.compat import install_as_voluptuous\n"
+        "install_as_voluptuous()\n"
         f"import {module}\n"
         "ha = sorted(m for m in sys.modules if m == 'homeassistant'"
         " or m.startswith('homeassistant.'))\n"
