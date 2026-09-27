@@ -158,6 +158,7 @@ SPARE_KILLSWITCH = "switch.plant_light_killswitch_spare_shelf"
 STUDY_ON_MINUTES = "sensor.plant_light_study_shelf_on_minutes"
 STUDY_LUX = "sensor.plant_lux_study_shelf"
 MONSTERA_DLI = "sensor.plant_monstera_dli_today"
+MONSTERA_DLI_TARGET = "sensor.plant_monstera_dli_target"
 
 LIGHT_CONFIG: dict[str, Any] = {
     DOMAIN: {

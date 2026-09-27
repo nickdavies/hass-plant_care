@@ -96,6 +96,18 @@ class DliObjective:
         """
         return (self.preferred.high - self.preferred.low) * 3.0
 
+    def percent_of_target(self, value: float) -> float | None:
+        """`value` as a percentage of the preferred band's low edge, so 100 is
+        the day's minimum met.
+
+        The preferred band rather than survival, because the target is what the
+        plant should get, not what it can live through. `None` for a band
+        starting at zero, which any day meets.
+        """
+        if self.preferred.low <= 0:
+            return None
+        return value / self.preferred.low * 100.0
+
 
 @dataclass(frozen=True)
 class DailyDli:

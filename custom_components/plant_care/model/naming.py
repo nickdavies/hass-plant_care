@@ -106,6 +106,12 @@ def dli_today(plant: Plant) -> Entity:
     return Entity(Domain.SENSOR, _name(plant, "dli_today"))
 
 
+def dli_target(plant: Plant) -> Entity:
+    """Today's light as a percentage of the preferred minimum. Comparable
+    across plants with different bands, which the raw total is not."""
+    return Entity(Domain.SENSOR, _name(plant, "dli_target"))
+
+
 # ---- The feed -----------------------------------------------------------
 
 

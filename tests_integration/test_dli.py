@@ -18,6 +18,7 @@ from .conftest import (
     LUX_1,
     LUX_2,
     MONSTERA_DLI,
+    MONSTERA_DLI_TARGET,
     STUDY_LUX,
     STUDY_SWITCH,
     at,
@@ -142,6 +143,19 @@ class TestAccumulation:
         # Surfaced so a band that differs from its category stays explicable
         # months later rather than looking like a mistake.
         assert attributes["preferred_overridden"] is False
+
+    async def test_the_target_sensor_is_today_against_the_preferred_minimum(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """So plants with different bands share one graph: 100 is the day's
+        minimum met, whatever that minimum is."""
+        lux(hass, 10000, 10000)
+        await start(hass, freezer, at(12, 0))
+        await tick(hass, freezer, minutes=60)
+
+        target = float(hass.states.get(MONSTERA_DLI_TARGET).state)
+        assert dli(hass) > 0
+        assert target == pytest.approx(dli(hass) / 4.0 * 100, abs=0.1)
 
 
 class TestPersistence:
