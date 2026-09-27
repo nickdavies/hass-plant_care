@@ -13,6 +13,7 @@ from homeassistant.helpers.event import async_track_time_interval
 from homeassistant.helpers.typing import ConfigType, DiscoveryInfoType
 from homeassistant.util import dt as dt_util
 
+from .claims import add_and_claim
 from .const import DOMAIN, SIGNAL_CARE_UPDATED
 from .entity import PlantEntity
 from .model import Calibrated, CareTask, Plant, naming
@@ -46,7 +47,7 @@ async def async_setup_platform(
         ):
             entities.append(NeedsWaterBinarySensor(coordinator))
 
-    async_add_entities(entities)
+    add_and_claim(hass, "binary_sensor", async_add_entities, entities)
 
 
 class CareDueBinarySensor(PlantEntity, BinarySensorEntity):

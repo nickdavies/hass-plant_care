@@ -42,6 +42,12 @@ jobs:
         with:
           repository: nickdavies/hass-lovelace_codegen
           path: .deps/hass-lovelace_codegen
+      - uses: actions/checkout@v4
+        # The same for the config bridge, which pins this component's
+        # entities through its claims.
+        with:
+          repository: nickdavies/hass-config_bridge
+          path: .deps/hass-config_bridge
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"

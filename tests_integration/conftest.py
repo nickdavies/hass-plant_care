@@ -244,6 +244,10 @@ REPO_ROOT = pathlib.Path(__file__).parent.parent
 # it tests against here.
 LOVELACE_CODEGEN = REPO_ROOT / ".deps" / "hass-lovelace_codegen"
 
+# The config bridge, which pins this component's entities through claims. The
+# same arrangement as lovelace_codegen.
+CONFIG_BRIDGE = REPO_ROOT / ".deps" / "hass-config_bridge"
+
 
 def _ensure_custom_components_path() -> None:
     """Put this project's custom_components, and its dependency's, on the
@@ -255,7 +259,7 @@ def _ensure_custom_components_path() -> None:
     """
     import custom_components
 
-    for root in (REPO_ROOT, LOVELACE_CODEGEN):
+    for root in (REPO_ROOT, LOVELACE_CODEGEN, CONFIG_BRIDGE):
         path = str(root / "custom_components")
         if path in custom_components.__path__:
             continue

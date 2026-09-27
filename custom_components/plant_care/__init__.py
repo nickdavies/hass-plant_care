@@ -199,6 +199,11 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         len(light_controllers),
     )
 
+    # Imported here: it is only needed once Home Assistant is running.
+    from .claims import warn_without_bridge
+
+    warn_without_bridge(hass)
+
     for platform in PLATFORMS:
         hass.async_create_task(
             discovery.async_load_platform(hass, platform, DOMAIN, {}, config)
