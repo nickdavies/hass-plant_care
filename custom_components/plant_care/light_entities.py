@@ -10,6 +10,7 @@ from __future__ import annotations
 from typing import Any
 
 from homeassistant.components.sensor import SensorEntity, SensorStateClass
+from homeassistant.const import PERCENTAGE
 from homeassistant.core import callback
 
 from .dli import DliCoordinator
@@ -68,6 +69,7 @@ class LightOnMinutesSensor(FixtureEntity, SensorEntity):
             "tracked_minutes": self._controller.tracked_minutes,
             "guaranteed_minutes": guaranteed,
             "possible_minutes": possible,
+            "day_possible_minutes": self._controller.day_possible_minutes(),
             "killswitch": self._controller.killed,
             "deviation": deviation.direction.value if deviation else None,
         }
@@ -165,3 +167,37 @@ class DliTodaySensor(PlantEntity, SensorEntity):
             attributes["survival_low"] = objective.survival.low
             attributes["survival_high"] = objective.survival.high
         return attributes
+
+
+class DliTargetSensor(PlantEntity, SensorEntity):
+    """Today's light as a percentage of the preferred band's low edge.
+
+    Its own entity rather than an attribute, so it has history: it is what
+    puts every plant's light on one graph, where the raw totals would be on
+    scales that differ plant to plant.
+    """
+
+    _attr_native_unit_of_measurement = PERCENTAGE
+    _attr_state_class = SensorStateClass.MEASUREMENT
+    _attr_icon = "mdi:white-balance-sunny"
+
+    def __init__(self, coordinator: DliCoordinator) -> None:
+        plant = coordinator.plant
+        super().__init__(
+            plant, naming.dli_target(plant), f"{plant.display} DLI of target"
+        )
+        self._coordinator = coordinator
+
+    async def async_added_to_hass(self) -> None:
+        self.async_on_remove(self._coordinator.async_add_listener(self._handle_update))
+
+    @callback
+    def _handle_update(self) -> None:
+        self.async_write_ha_state()
+
+    @property
+    def native_value(self) -> float | None:
+        objective = self._coordinator.plant.dli
+        assert objective is not None  # a coordinator cannot exist without one
+        percent = objective.percent_of_target(self._coordinator.today)
+        return round(percent, 1) if percent is not None else None

@@ -22,7 +22,12 @@ from .const import (
 )
 from .entity import PlantEntity
 from .feed import all_items, person_items, plant_items
-from .light_entities import DliTodaySensor, LightOnMinutesSensor, LuxAverageSensor
+from .light_entities import (
+    DliTargetSensor,
+    DliTodaySensor,
+    LightOnMinutesSensor,
+    LuxAverageSensor,
+)
 from .model import CareTask, Entity, Plant, markdown, naming
 from .moisture_entities import moisture_sensors
 from .store import EventLog
@@ -56,6 +61,7 @@ async def async_setup_platform(
         dli = data.dli_coordinators.get(plant.name)
         if dli is not None:
             entities.append(DliTodaySensor(dli))
+            entities.append(DliTargetSensor(dli))
             # One entity per lux *fixture*, not per plant: several plants can
             # share a fixture, and a second copy would claim the same entity id
             # and silently win. Whichever coordinator backs it reads the same

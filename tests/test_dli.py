@@ -92,6 +92,14 @@ class TestObjective:
         objective = DliObjective(category="shade", preferred=Band(low=3.0, high=6.0))
         assert not outside_survival(0.0, objective)
 
+    def test_the_target_is_the_preferred_minimum_not_survival(self) -> None:
+        assert MONSTERA.percent_of_target(4.0) == pytest.approx(100.0)
+        assert MONSTERA.percent_of_target(2.0) == pytest.approx(50.0)
+
+    def test_a_band_from_zero_has_no_target_to_be_a_percentage_of(self) -> None:
+        objective = DliObjective(category="shade", preferred=Band(low=0.0, high=6.0))
+        assert objective.percent_of_target(3.0) is None
+
 
 class TestBurnRate:
     def test_on_pace_is_one(self) -> None:

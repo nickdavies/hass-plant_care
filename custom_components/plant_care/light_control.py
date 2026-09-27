@@ -395,6 +395,14 @@ class LightController:
             window.possible_minutes(self._tracking_since, now.time(), day),
         )
 
+    def day_possible_minutes(self, now: datetime | None = None) -> int:
+        """The most the window allows over the whole of today, rather than
+        over the part of it tracked so far: the ceiling the day's on-time is
+        progress towards."""
+        now = now or dt_util.now()
+        day = Weekday.from_python(now.weekday())
+        return self._fixture.window.possible_minutes(time.min, time.max, day)
+
     def deviation(self, now: datetime | None = None) -> OnTimeDeviation | None:
         guaranteed, possible = self.expectation(now)
         return on_time_deviation(self.tracked_minutes, guaranteed, possible)

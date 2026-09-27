@@ -408,6 +408,8 @@ class TestOnTimeOutcome:
         # 09:00-12:00 is guaranteed; 06:00-12:00 is the most it could open.
         assert state.attributes["guaranteed_minutes"] == 180
         assert state.attributes["possible_minutes"] == 360
+        # The whole day's ceiling, 06:00-19:00, not just the morning's.
+        assert state.attributes["day_possible_minutes"] == 780
 
     async def test_a_dead_lamp_reaches_the_feed_for_the_plants_under_it(
         self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
