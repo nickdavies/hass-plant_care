@@ -3,7 +3,9 @@
 Every entity here has a unique id, so it is in the entity registry, where the
 UI can rename it, move it to an area or hide it. Each platform claims the
 entities it adds with the config bridge, which puts them back at every boot
-to the component's own values, so what they are stays in git.
+to what the config says, so what they are stays in git: in the `area` of
+their plant or fixture, if it names one, and every other field the
+component's own.
 
 Claims are per platform and merged, because each platform sets up on its
 own, before Home Assistant has started, which is when the bridge reads them.
@@ -56,7 +58,9 @@ def add_and_claim(
     if not bridge_is_set_up(hass):
         return
     claimed = hass.data.setdefault(CLAIMED, {})
-    claimed[platform] = [e.entity_id for e in entities if e.unique_id is not None]
+    claimed[platform] = {
+        e.entity_id: _item(e) for e in entities if e.unique_id is not None
+    }
     # Imported here: the bridge is a separate custom component, and only
     # there when it is set up.
     from custom_components.config_bridge import claim_entities
@@ -64,5 +68,19 @@ def add_and_claim(
     claim_entities(
         hass,
         DOMAIN,
-        {entity_id: None for ids in claimed.values() for entity_id in ids},
+        {
+            entity_id: item
+            for items in claimed.values()
+            for entity_id, item in items.items()
+        },
     )
+
+
+def _item(entity: Entity) -> dict[str, str] | None:
+    """An entity as a config bridge `entities` item: in its plant's or
+    fixture's area, if the config gives one, and every other field its own.
+
+    The feed sensors belong to no plant or fixture, so they have no area.
+    """
+    area = getattr(entity, "area", None)
+    return {"area_id": area} if area is not None else None

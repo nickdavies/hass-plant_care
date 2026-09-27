@@ -279,6 +279,9 @@ class LightFixture:
     """This lamp's spectrum. Absent unless a lux fixture covers a plant under
     it — parsing requires it at exactly that point."""
 
+    area: str | None = None
+    """The id of the Home Assistant area it is in."""
+
     @property
     def is_sleep_sensitive(self) -> bool:
         return isinstance(self.window, AwakeAwareWindow)
@@ -311,6 +314,8 @@ class LuxFixture:
     name: str
     entities: tuple[str, ...]
     sun_lux_to_ppfd: float
+    area: str | None = None
+    """The id of the Home Assistant area it is in."""
 
     @staticmethod
     def average(readings: Sequence[float | None]) -> float | None:

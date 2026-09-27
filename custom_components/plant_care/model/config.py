@@ -76,6 +76,7 @@ RESERVED_OWNER_ALL = "all"
 """The dashboard's shared tab path, so not an owner."""
 
 FIELD_NAME = "name"
+FIELD_AREA = "area"
 FIELD_DISPLAY = "display"
 FIELD_ICON = "icon"
 FIELD_ENTITIES = "entities"
@@ -373,6 +374,7 @@ def _light_schema() -> vol.Schema:
             vol.Required(FIELD_SWITCH): _entity_id,
             vol.Optional(FIELD_LUX_TO_PPFD): _POSITIVE_FLOAT,
             vol.Required(FIELD_WINDOW): _window_schema(),
+            vol.Optional(FIELD_AREA): _slug,
         }
     )
 
@@ -385,6 +387,7 @@ def _lux_schema() -> vol.Schema:
             vol.Optional(
                 FIELD_SUN_LUX_TO_PPFD, default=DEFAULT_SUN_LUX_TO_PPFD
             ): _POSITIVE_FLOAT,
+            vol.Optional(FIELD_AREA): _slug,
         }
     )
 
@@ -478,6 +481,7 @@ def _plant_schema() -> vol.Schema:
             vol.Optional(FIELD_LIGHTS): [str],
             vol.Optional(FIELD_LUX): str,
             vol.Optional(FIELD_DLI): _dli_schema(),
+            vol.Optional(FIELD_AREA): _slug,
         }
     )
 
@@ -629,6 +633,7 @@ def _parse_lights(data: Mapping[str, Any]) -> tuple[LightFixture, ...]:
             switch_entity=entry[FIELD_SWITCH],
             window=_parse_window(entry[FIELD_WINDOW], entry[FIELD_NAME]),
             lux_to_ppfd=entry.get(FIELD_LUX_TO_PPFD),
+            area=entry.get(FIELD_AREA),
         )
         for entry in data.get(FIELD_LIGHTS, [])
     )
@@ -640,6 +645,7 @@ def _parse_lux(data: Mapping[str, Any]) -> tuple[LuxFixture, ...]:
             name=entry[FIELD_NAME],
             entities=tuple(entry[FIELD_ENTITIES]),
             sun_lux_to_ppfd=entry.get(FIELD_SUN_LUX_TO_PPFD, DEFAULT_SUN_LUX_TO_PPFD),
+            area=entry.get(FIELD_AREA),
         )
         for entry in data.get(FIELD_LUX_SENSORS, [])
     )
@@ -811,6 +817,7 @@ def _parse_plant(
         lights=tuple(data.get(FIELD_LIGHTS, [])),
         lux=data.get(FIELD_LUX),
         dli=_parse_dli(data.get(FIELD_DLI), name, dli_categories),
+        area=data.get(FIELD_AREA),
     )
 
 

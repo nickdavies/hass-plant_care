@@ -405,6 +405,18 @@ class TestPlantShape:
         assert plant.species is None
         assert plant.light_source is None
 
+    def test_area_is_optional(self) -> None:
+        (plant,) = load({"name": "ficus_alii", "owner": "nick"})
+        assert plant.area is None
+
+    def test_area_is_kept(self) -> None:
+        (plant,) = load({"name": "ficus_alii", "owner": "nick", "area": "living"})
+        assert plant.area == "living"
+
+    def test_area_must_be_an_id(self) -> None:
+        with pytest.raises(vol.Invalid):
+            load({"name": "ficus_alii", "owner": "nick", "area": "Living Room"})
+
     def test_display_defaults_to_the_title_cased_name(self) -> None:
         (plant,) = load({"name": "ficus_alii", "owner": "nick"})
         assert plant.display == "Ficus Alii"
@@ -936,3 +948,19 @@ class TestOwners:
 
     def test_system_notify_is_kept_as_written(self) -> None:
         assert load_config(CALIBRATED_PLANT).owners.system_notify == "notify.phones"
+
+
+class TestFixtureAreas:
+    def test_lights_and_lux_sensors_take_an_area(self) -> None:
+        config = load_config(
+            LIT_PLANT,
+            lights=[{**STUDY_LIGHT, "area": "nick_study"}],
+            lux=[{**STUDY_LUX, "area": "nick_study"}],
+        )
+        assert config.lights[0].area == "nick_study"
+        assert config.lux_sensors[0].area == "nick_study"
+
+    def test_a_fixture_area_is_optional(self) -> None:
+        config = load_config(LIT_PLANT, lights=[STUDY_LIGHT], lux=[STUDY_LUX])
+        assert config.lights[0].area is None
+        assert config.lux_sensors[0].area is None
