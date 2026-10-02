@@ -141,12 +141,10 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         await coordinator.async_start()
         coordinators[plant.name] = coordinator
 
-    light_controllers: dict[str, LightController] = {}
-    for fixture in parsed.lights:
-        controller = LightController(hass, fixture, event_log)
-        await controller.async_start()
-        light_controllers[fixture.name] = controller
-
+    # Light is measured before the lamps start, because a lamp is cut once the
+    # plants under it have had enough: today's total must already be restored
+    # when a controller first decides, or a restart late in the day would turn
+    # a cut lamp back on until the next sample.
     dli_coordinators: dict[str, DliCoordinator] = {}
     for plant in plants:
         if plant.dli is None or plant.lux is None:
@@ -156,6 +154,20 @@ async def async_setup(hass: HomeAssistant, config: ConfigType) -> bool:
         dli = DliCoordinator(hass, plant, lux, parsed.fixtures_for(plant), event_log)
         await dli.async_start()
         dli_coordinators[plant.name] = dli
+
+    light_controllers: dict[str, LightController] = {}
+    for fixture in parsed.lights:
+        under = parsed.plants_under(fixture)
+        measured = [dli_coordinators.get(plant.name) for plant in under]
+        controller = LightController(
+            hass,
+            fixture,
+            event_log,
+            # Every plant under it, or none: see `LightController`.
+            [m for m in measured if m is not None] if None not in measured else (),
+        )
+        await controller.async_start()
+        light_controllers[fixture.name] = controller
 
     data = PlantCareData(
         config=parsed,

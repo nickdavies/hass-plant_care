@@ -327,6 +327,28 @@ guest sleeping until eleven costs it the early light and never the guaranteed
 part — which is also why the on-time check's bounds do not depend on which
 matcher a lamp uses.
 
+**A lamp is cut for the day once every plant under it has had enough.** The
+window says when a lamp *may* run; light already banked says whether it still
+needs to. Once today's DLI for every plant under a fixture reaches the top of
+its preferred band, the lamp goes off and stays off until midnight, whatever
+the window says, guaranteed stretch included. Long windows and plants that
+also catch the sun no longer run past their band.
+
+"Every plant" is strict: a fixture with an unmeasured plant under it is never
+cut, because nothing can show that plant has had enough. The line is just
+under the top of the band (5% of its width) rather than at it, so the minute
+or two a cut takes lands the day at the top instead of paging "too much light
+today". A day's total only grows, so nothing can bring a cut lamp back on
+before midnight. A plant just past midnight is never judged on yesterday's
+total either.
+
+The cut ends the on-time expectations: a lamp cut at four has not missed the
+guaranteed hours after it, and one still on after it is running long. The
+moment is stored with the on-time record so a restart does not re-stamp it,
+and the on-time sensor shows it as `enough_light_at`. If a plant passes its
+band anyway after its lamps are off, the excess item says it is daylight
+rather than a stuck lamp.
+
 **A killswitch freezes a fixture; it does not turn it off.** One boolean rather
 than a kill plus a force, because two can contradict each other. That makes a
 frozen fixture dangerous in both directions — stuck off starves the plants under

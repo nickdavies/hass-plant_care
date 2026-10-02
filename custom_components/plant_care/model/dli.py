@@ -63,6 +63,16 @@ class Direction(Enum):
     BOTH = "both"
 
 
+LAMP_CUTOFF_HEADROOM = 0.05
+"""How far under the top of the band a lamp is cut, as a fraction of the
+band's width.
+
+A guess, sized to cover a few minutes of a strong lamp with room to spare. A
+12–18 band cuts at 17.7 mol, which is a quarter of an hour of 355 µmol/m²/s;
+the overshoot it has to absorb is a minute or two of it.
+"""
+
+
 @dataclass(frozen=True)
 class DliObjective:
     """What "enough light" means for one plant."""
@@ -95,6 +105,30 @@ class DliObjective:
         not getting what the band describes, and the mean alone cannot see it.
         """
         return (self.preferred.high - self.preferred.low) * 3.0
+
+    @property
+    def lamp_cutoff(self) -> float:
+        """Today's total past which a lamp over this plant has nothing to add.
+
+        Just under the top of the band rather than at it. Turning a lamp off
+        is not instant — the total is sampled once a minute, the controller
+        acts on the next evaluation, the outlet takes a moment — and a cut
+        aimed exactly at `high` lands a little over it every time, which is a
+        "too much light today" item on every day the cut works. Headroom from
+        the band's own width, for `unstable_spread`'s reason: it scales with
+        how fussy the plant is and there is no extra number to configure.
+        """
+        band = self.preferred
+        return band.high - (band.high - band.low) * LAMP_CUTOFF_HEADROOM
+
+    def has_had_enough(self, accumulated: float) -> bool:
+        """Whether today's light has reached `lamp_cutoff`.
+
+        A day's total only grows, so once this is true it stays true until
+        midnight. That is what keeps a lamp cut by it off: the lamp going out
+        lowers the light *rate*, never the total, so there is nothing to flap.
+        """
+        return accumulated >= self.lamp_cutoff
 
     def percent_of_target(self, value: float) -> float | None:
         """`value` as a percentage of the preferred band's low edge, so 100 is

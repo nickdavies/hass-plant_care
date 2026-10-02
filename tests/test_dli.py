@@ -101,6 +101,40 @@ class TestObjective:
         assert objective.percent_of_target(3.0) is None
 
 
+class TestLampCutoff:
+    """Where a lamp over a plant stops adding anything worth having."""
+
+    def test_it_sits_just_under_the_top_of_the_band(self) -> None:
+        # 5% of a 4-9 band's width under 9.
+        assert MONSTERA.lamp_cutoff == pytest.approx(8.75)
+
+    def test_the_headroom_scales_with_the_band(self) -> None:
+        bright = DliObjective(category="bright", preferred=Band(low=12.0, high=18.0))
+        assert bright.lamp_cutoff == pytest.approx(17.7)
+
+    def test_it_stays_inside_the_band(self) -> None:
+        """Cut below the bottom and the lamp would starve the plant it is
+        protecting; cut at or past the top and every working day pages."""
+        for objective in (MONSTERA, TIGHT):
+            band = objective.preferred
+            assert band.low < objective.lamp_cutoff < band.high
+
+    def test_enough_is_reached_at_the_cutoff_not_after_it(self) -> None:
+        assert not MONSTERA.has_had_enough(8.74)
+        assert MONSTERA.has_had_enough(8.75)
+        assert MONSTERA.has_had_enough(12.0)
+
+    def test_a_day_cut_at_the_line_is_not_an_excess(self) -> None:
+        """A minute or two of a strong lamp past the cut still lands in band,
+        which is what the headroom is for."""
+        two_minutes_of_lamp = 900 * 120 / 1_000_000
+        landed = MONSTERA.lamp_cutoff + two_minutes_of_lamp
+        assert (
+            today_certainty(landed, datetime(2026, 9, 15, 14, tzinfo=UTC), [], MONSTERA)
+            is None
+        )
+
+
 class TestBurnRate:
     def test_on_pace_is_one(self) -> None:
         """A 20 mol budget over 28 days is 5 over 7 days. Spending exactly that

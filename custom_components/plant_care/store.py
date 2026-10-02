@@ -127,6 +127,11 @@ class OnTimeRecord:
     arrives from MQTT discovery some time *after* the controller does, so at
     the moment the decision is made there is nothing there to read.
     """
+    enough_at: time | None = None
+    """Local time-of-day every plant under the lamp had had enough light, so it
+    was cut for the rest of the day. Kept for the expectations, which end there:
+    a restart would otherwise re-stamp it at start-up and judge the hours in
+    between as ones the lamp should have been on for."""
 
 
 class EventLog:
@@ -205,6 +210,11 @@ class EventLog:
                     counted_from=float(record["counted_from"]),
                     seen=datetime.fromisoformat(record["seen"]),
                     on=bool(record["on"]),
+                    enough_at=(
+                        time.fromisoformat(record["enough_at"])
+                        if record.get("enough_at") is not None
+                        else None
+                    ),
                 )
             except (KeyError, TypeError, ValueError):
                 # Dropping it costs one fixture the morning it has already
@@ -257,6 +267,11 @@ class EventLog:
                         "counted_from": round(record.counted_from, 3),
                         "seen": record.seen.isoformat(),
                         "on": record.on,
+                        "enough_at": (
+                            record.enough_at.isoformat()
+                            if record.enough_at is not None
+                            else None
+                        ),
                     }
                     for fixture, record in self._on_time.items()
                 },

@@ -3,7 +3,8 @@
 Two jobs, in one object because they share a subscription to the same switch:
 
 1. Re-evaluate the window every minute and whenever its sleepers change, and drive
-   the switch when it disagrees.
+   the switch when it disagrees. Once every plant under it has had its fill of
+   light for the day, it stays off whatever the window says.
 2. Count how long the switch was *actually* on, so the outcome can be compared
    against what the window allows. That is the half that catches a bulb that
    died behind a live outlet, an outlet that fell off zigbee2mqtt, and a
@@ -17,7 +18,7 @@ is testable without a running Home Assistant, a clock, or a lamp.
 from __future__ import annotations
 
 import logging
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from datetime import date, datetime, time, timedelta
 
 from homeassistant.const import SERVICE_TURN_OFF, SERVICE_TURN_ON, STATE_ON
@@ -30,6 +31,7 @@ from homeassistant.helpers.event import (
 from homeassistant.helpers.start import async_at_started
 from homeassistant.util import dt as dt_util
 
+from .dli import DliCoordinator
 from .model import (
     MAX_RESTART_GAP_MINUTES,
     LightFixture,
@@ -75,11 +77,23 @@ class LightController:
     """Keeps one fixture's switch matching its window, and records the outcome."""
 
     def __init__(
-        self, hass: HomeAssistant, fixture: LightFixture, event_log: EventLog
+        self,
+        hass: HomeAssistant,
+        fixture: LightFixture,
+        event_log: EventLog,
+        measured: Sequence[DliCoordinator] = (),
     ) -> None:
+        """`measured` is every plant under the fixture, or nothing.
+
+        Nothing when any plant under it has no DLI coordinator: a lamp is only
+        cut when *every* plant it lights has had enough, and a plant nobody
+        measures can never be shown to have. All or none is decided by the
+        caller, which knows which plants sit under this fixture.
+        """
         self._hass = hass
         self._fixture = fixture
         self._event_log = event_log
+        self._measured = tuple(measured)
         self._unsubs: list[Callable[[], None]] = []
         self._listeners: list[Callable[[], None]] = []
         self._killed = False
@@ -104,6 +118,10 @@ class LightController:
         self._was_on = False
         self._flushed_at = dt_util.now()
 
+        # When today the plants under it had all had enough, after which the
+        # lamp stays off. Per day, and persisted with on-time, which it bounds.
+        self._enough_at: time | None = None
+
     @property
     def fixture(self) -> LightFixture:
         return self._fixture
@@ -111,6 +129,12 @@ class LightController:
     @property
     def killed(self) -> bool:
         return self._killed
+
+    @property
+    def enough_at(self) -> time | None:
+        """When the lamp was cut for the day, every plant under it having had
+        its fill; `None` while any of them has not."""
+        return self._enough_at
 
     @property
     def on_minutes(self) -> int:
@@ -168,6 +192,12 @@ class LightController:
                     self._hass, watched, self._handle_sleepers
                 )
             )
+        # The plants' light, so the cut lands on the sample that crosses the
+        # line rather than up to a minute after it.
+        for coordinator in self._measured:
+            self._unsubs.append(
+                coordinator.async_add_listener(self._handle_light_measured)
+            )
         # The switch, so on-time is credited at the transition rather than
         # rounded to the next tick.
         self._unsubs.append(
@@ -218,7 +248,9 @@ class LightController:
 
     @callback
     def _handle_tick(self, _now: datetime) -> None:
-        self._sample()
+        now = dt_util.now()
+        self._sample(now)
+        self._note_enough(now)
         self.async_apply()
         # Unconditionally, not just when a command goes out: on-time and the
         # deviation derived from it move every minute whether or not the lamp
@@ -232,6 +264,13 @@ class LightController:
         self.async_apply()
 
     @callback
+    def _handle_light_measured(self) -> None:
+        # Every coordinator reports every minute, so this is only worth acting
+        # on for the one report that crosses the line.
+        if self._enough_at is None and self._has_had_enough(dt_util.now()):
+            self._handle_tick(dt_util.now())
+
+    @callback
     def _handle_switch(self, _event: Event[EventStateChangedData]) -> None:
         self._sample()
         self._notify()
@@ -242,8 +281,36 @@ class LightController:
         state = self._hass.states.get(self._fixture.switch_entity)
         return state is not None and state.state == STATE_ON
 
+    def _has_had_enough(self, now: datetime) -> bool:
+        return bool(self._measured) and all(
+            coordinator.has_had_enough(now) for coordinator in self._measured
+        )
+
+    @callback
+    def _note_enough(self, now: datetime) -> None:
+        """Stamp the moment the plants under it had all had enough.
+
+        Once per day: totals only grow, so nothing un-stamps it before the day
+        rolls over in `_sample`. Stamped even while the killswitch is on — it
+        is a fact about the plants, and the expectations end at it either way,
+        so a lamp held on by hand past it shows up as running long.
+        """
+        if self._enough_at is not None or self._day != now.date():
+            return
+        if not self._has_had_enough(now):
+            return
+        self._enough_at = now.time()
+        _LOGGER.debug(
+            "plant_care: every plant under %s has had enough light today",
+            self._fixture.name,
+        )
+        self._persist(now)
+
     def should_be_on(self, now: datetime | None = None) -> bool:
-        """What the window says, ignoring the killswitch."""
+        """What the window says, ignoring the killswitch — off for the rest of
+        the day once the plants under it have all had enough."""
+        if self._enough_at is not None:
+            return False
         now = now or dt_util.now()
         states: dict[str, str | None] = {}
         for entity_id in self._fixture.watched_entities:
@@ -320,11 +387,15 @@ class LightController:
         self._sampled_at = now
         self._was_on = self._switch_is_on()
         self._flushed_at = now
+        self._enough_at = None
 
         stored = self._event_log.on_time(self._fixture.name)
         if stored is None or stored.day != now.date():
             return
 
+        # Whatever the gap: it is a fact about the plants' day, not a guess
+        # about the lamp's.
+        self._enough_at = stored.enough_at
         gap = now - stored.seen
         self._on_minutes = stored.minutes
         if timedelta(0) <= gap <= MAX_RESTART_GAP:
@@ -354,6 +425,7 @@ class LightController:
             self._counted_from = 0.0
             self._sampled_at = now
             self._was_on = self._switch_is_on()
+            self._enough_at = None
             self._persist(now)
             return
 
@@ -381,27 +453,44 @@ class LightController:
                     counted_from=self._counted_from,
                     seen=now,
                     on=self._was_on,
+                    enough_at=self._enough_at,
                 ),
             )
         )
 
+    def _until(self, moment: time) -> time:
+        """`moment`, or the cut if that came first: past it the window no
+        longer guarantees anything or allows anything."""
+        if self._enough_at is None:
+            return moment
+        return min(moment, self._enough_at)
+
     def expectation(self, now: datetime | None = None) -> tuple[int, int]:
-        """Minutes the window guarantees, and the most it could ever allow."""
+        """Minutes the window guarantees, and the most it could ever allow.
+
+        Both stop at the cut. A lamp cut at four has not missed the
+        guaranteed hours after it, and one still on after it is running
+        outside what the plants needed.
+        """
         now = now or dt_util.now()
         day = Weekday.from_python(now.weekday())
         window = self._fixture.window
+        until = self._until(now.time())
         return (
-            window.guaranteed_minutes(self._tracking_since, now.time(), day),
-            window.possible_minutes(self._tracking_since, now.time(), day),
+            window.guaranteed_minutes(self._tracking_since, until, day),
+            window.possible_minutes(self._tracking_since, until, day),
         )
 
     def day_possible_minutes(self, now: datetime | None = None) -> int:
         """The most the window allows over the whole of today, rather than
         over the part of it tracked so far: the ceiling the day's on-time is
-        progress towards."""
+        progress towards. A cut lowers it to what was left before the cut, so
+        a lamp done for the day reads as done."""
         now = now or dt_util.now()
         day = Weekday.from_python(now.weekday())
-        return self._fixture.window.possible_minutes(time.min, time.max, day)
+        return self._fixture.window.possible_minutes(
+            time.min, self._until(time.max), day
+        )
 
     def deviation(self, now: datetime | None = None) -> OnTimeDeviation | None:
         guaranteed, possible = self.expectation(now)

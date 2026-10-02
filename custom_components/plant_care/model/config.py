@@ -849,6 +849,9 @@ class PlantCareConfig:
     def fixtures_for(self, plant: Plant) -> tuple[LightFixture, ...]:
         return tuple(f for name in plant.lights if (f := self.light(name)) is not None)
 
+    def plants_under(self, fixture: LightFixture) -> tuple[Plant, ...]:
+        return tuple(p for p in self.plants if fixture.name in p.lights)
+
     def plants_for(self, person: str) -> tuple[Plant, ...]:
         """Owned outright, or through a group."""
         return tuple(p for p in self.plants if person in self.owners.members(p.owner))
