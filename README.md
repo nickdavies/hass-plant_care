@@ -342,6 +342,19 @@ today". A day's total only grows, so nothing can bring a cut lamp back on
 before midnight. A plant just past midnight is never judged on yesterday's
 total either.
 
+A cut is only as good as the lux reading behind it, so it is sanity-checked
+against how long the lamp normally runs. Normal is the median of its last 14
+completed days of on-time. Until there are 3, the window's guaranteed minutes
+stand in. Below half of normal, a reading that says the plants have had
+enough is not believed: the lamp runs on to that floor before it can be cut,
+and a `light_cut_distrusted` item goes to the system feed once that day. A
+probe in direct sun or a `lux_to_ppfd` typo would otherwise cut a lamp after
+an hour and starve everything under it with nothing looking wrong. A bright
+day trims a lamp's hours; a broken reading takes most of them. Only whole days
+count towards normal (counted from midnight, nothing lost to an outage), so a
+start-up at nine does not drag it down. The on-time sensor shows
+`normal_minutes`, `cut_floor_minutes` and `cut_held_at`.
+
 The cut ends the on-time expectations: a lamp cut at four has not missed the
 guaranteed hours after it, and one still on after it is running long. The
 moment is stored with the on-time record so a restart does not re-stamp it,

@@ -4,7 +4,8 @@ Two jobs, in one object because they share a subscription to the same switch:
 
 1. Re-evaluate the window every minute and whenever its sleepers change, and drive
    the switch when it disagrees. Once every plant under it has had its fill of
-   light for the day, it stays off whatever the window says.
+   light for the day, it stays off whatever the window says — unless the lamp
+   has run so far under its normal hours that the reading is not believed.
 2. Count how long the switch was *actually* on, so the outcome can be compared
    against what the window allows. That is the half that catches a bulb that
    died behind a live outlet, an outlet that fell off zigbee2mqtt, and a
@@ -40,6 +41,7 @@ from .model import (
     on_time_deviation,
 )
 from .model.health import HealthIssue, IssueKind
+from .model.light import NORMAL_ON_TIME_DAYS, cut_floor_minutes, normal_on_minutes
 from .store import EventLog, OnTimeRecord
 
 _LOGGER = logging.getLogger(__name__)
@@ -121,6 +123,11 @@ class LightController:
         # When today the plants under it had all had enough, after which the
         # lamp stays off. Per day, and persisted with on-time, which it bounds.
         self._enough_at: time | None = None
+        # When today the plants first read as having had enough while the lamp
+        # was still far under normal, and how long it had run by then. Per day
+        # and persisted, like the cut.
+        self._held_at: time | None = None
+        self._held_minutes: float | None = None
 
     @property
     def fixture(self) -> LightFixture:
@@ -135,6 +142,11 @@ class LightController:
         """When the lamp was cut for the day, every plant under it having had
         its fill; `None` while any of them has not."""
         return self._enough_at
+
+    @property
+    def held_at(self) -> time | None:
+        """When today a cut was held back for the lamp having barely run."""
+        return self._held_at
 
     @property
     def on_minutes(self) -> int:
@@ -299,6 +311,24 @@ class LightController:
             return
         if not self._has_had_enough(now):
             return
+        floor = self.cut_floor_minutes(now)
+        if self._on_minutes < floor:
+            # The sanity check: a lamp that has barely run today cannot have
+            # been what gave the plants their fill, so the more likely story is
+            # a lux reading that is wrong. Run on to the floor rather than
+            # starve them on its word, and say so once.
+            if self._held_at is None:
+                self._held_at = now.time()
+                self._held_minutes = self._on_minutes
+                _LOGGER.warning(
+                    "plant_care: plants under %s read as having had enough after "
+                    "%.0f minutes of lamp, under the %d trusted; holding it on",
+                    self._fixture.name,
+                    self._on_minutes,
+                    floor,
+                )
+                self._persist(now)
+            return
         self._enough_at = now.time()
         _LOGGER.debug(
             "plant_care: every plant under %s has had enough light today",
@@ -388,14 +418,21 @@ class LightController:
         self._was_on = self._switch_is_on()
         self._flushed_at = now
         self._enough_at = None
+        self._held_at = None
+        self._held_minutes = None
 
         stored = self._event_log.on_time(self._fixture.name)
-        if stored is None or stored.day != now.date():
+        if stored is None:
+            return
+        if stored.day != now.date():
+            self._close_stored_day(stored)
             return
 
-        # Whatever the gap: it is a fact about the plants' day, not a guess
+        # Whatever the gap: these are facts about the plants' day, not guesses
         # about the lamp's.
         self._enough_at = stored.enough_at
+        self._held_at = stored.held_at
+        self._held_minutes = stored.held_minutes
         gap = now - stored.seen
         self._on_minutes = stored.minutes
         if timedelta(0) <= gap <= MAX_RESTART_GAP:
@@ -419,6 +456,10 @@ class LightController:
         now = now or dt_util.now()
 
         if self._day != now.date():
+            # A day counted from midnight with nothing taken back off is a
+            # whole one; anything else undercounts and would drag normal down.
+            if self._tracking_since == time(0, 0) and self._counted_from == 0:
+                self._close_day(self._day, self._on_minutes)
             self._day = now.date()
             self._tracking_since = time(0, 0)
             self._on_minutes = 0.0
@@ -426,6 +467,8 @@ class LightController:
             self._sampled_at = now
             self._was_on = self._switch_is_on()
             self._enough_at = None
+            self._held_at = None
+            self._held_minutes = None
             self._persist(now)
             return
 
@@ -454,9 +497,35 @@ class LightController:
                     seen=now,
                     on=self._was_on,
                     enough_at=self._enough_at,
+                    held_at=self._held_at,
+                    held_minutes=self._held_minutes,
                 ),
             )
         )
+
+    @callback
+    def _close_day(self, day: date, minutes: float) -> None:
+        self._hass.async_create_task(
+            self._event_log.async_record_on_time_day(
+                self._fixture.name, day, minutes, keep_days=NORMAL_ON_TIME_DAYS
+            )
+        )
+
+    @callback
+    def _close_stored_day(self, stored: OnTimeRecord) -> None:
+        """Bank a day that ended while Home Assistant was down.
+
+        Only when its record is the whole day: counted from midnight, nothing
+        taken back off, the lamp off when it was written, and the window
+        allowing nothing after that. Then no minute the lamp could have run is
+        missing from it.
+        """
+        if stored.since != time(0, 0) or stored.counted_from != 0 or stored.on:
+            return
+        day = Weekday.from_python(stored.day.weekday())
+        if self._fixture.window.possible_minutes(stored.seen.time(), time.max, day):
+            return
+        self._close_day(stored.day, stored.minutes)
 
     def _until(self, moment: time) -> time:
         """`moment`, or the cut if that came first: past it the window no
@@ -490,6 +559,44 @@ class LightController:
         day = Weekday.from_python(now.weekday())
         return self._fixture.window.possible_minutes(
             time.min, self._until(time.max), day
+        )
+
+    def normal_minutes(self, now: datetime | None = None) -> float:
+        """This lamp's usual daily on-time, from its completed days."""
+        now = now or dt_util.now()
+        completed = [
+            minutes
+            for day, minutes in sorted(
+                self._event_log.on_time_days(self._fixture.name).items()
+            )
+            if day < now.date()
+        ]
+        day = Weekday.from_python(now.weekday())
+        guaranteed = self._fixture.window.guaranteed_minutes(time.min, time.max, day)
+        return normal_on_minutes(completed, guaranteed)
+
+    def cut_floor_minutes(self, now: datetime | None = None) -> int:
+        """On-time the lamp must reach today before a cut is trusted."""
+        return cut_floor_minutes(self.normal_minutes(now))
+
+    def distrusted_issue(self, now: datetime | None = None) -> HealthIssue | None:
+        """A cut held back today because the lamp had barely run."""
+        if self._held_at is None or self._held_minutes is None:
+            return None
+        floor = self.cut_floor_minutes(now)
+        return HealthIssue(
+            kind=IssueKind.LIGHT_CUT_DISTRUSTED,
+            label=f"{self._fixture.name} light reading looks wrong",
+            detail=(
+                f"The plants under '{self._fixture.name}' read as having had "
+                f"enough light at {self._held_at:%H:%M}, when the lamp had run "
+                f"{self._held_minutes:.0f} minutes against a normal "
+                f"{self.normal_minutes(now):.0f}. Not believed: it is kept on to "
+                f"{floor} minutes before it can be cut. Check the lux sensors over "
+                "it and its lux_to_ppfd; if today really was that bright, "
+                "nothing is wrong."
+            ),
+            value=round(self._held_minutes),
         )
 
     def deviation(self, now: datetime | None = None) -> OnTimeDeviation | None:

@@ -27,6 +27,10 @@ from custom_components.plant_care.model import (
     on_time_deviation,
     ppfd_factor,
 )
+from custom_components.plant_care.model.light import (
+    cut_floor_minutes,
+    normal_on_minutes,
+)
 
 PRESENCE = "sensor.person_presence_nick"
 
@@ -349,6 +353,28 @@ class TestOnTimeDeviation:
         a deploy into an alert. A third leaves room for several in a day.
         """
         assert MAX_RESTART_GAP_MINUTES * 3 <= ON_TIME_TOLERANCE_MINUTES
+
+
+class TestNormalOnTime:
+    def test_it_is_the_median_of_recent_days(self) -> None:
+        assert normal_on_minutes([600, 620, 100], guaranteed=480) == 600
+        assert normal_on_minutes([600, 620, 100, 640], guaranteed=480) == 610
+
+    def test_one_odd_day_does_not_move_it(self) -> None:
+        """A killswitch weekend or a lost evening is why it is a median."""
+        assert normal_on_minutes([600] * 6 + [0], guaranteed=480) == 600
+
+    def test_only_the_last_fortnight_counts(self) -> None:
+        """A changed window is normal again within two weeks."""
+        assert normal_on_minutes([300] * 20 + [700] * 14, guaranteed=480) == 700
+
+    def test_too_few_days_fall_back_to_the_window(self) -> None:
+        assert normal_on_minutes([], guaranteed=480) == 480
+        assert normal_on_minutes([100, 100], guaranteed=480) == 480
+
+    def test_the_floor_is_half_of_normal(self) -> None:
+        assert cut_floor_minutes(780) == 390
+        assert cut_floor_minutes(0) == 0
 
 
 class TestPpfdFactor:

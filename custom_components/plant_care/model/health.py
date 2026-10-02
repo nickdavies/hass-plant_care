@@ -48,6 +48,9 @@ class IssueKind(Enum):
     LIGHT_UNSTABLE = "light_unstable"
     LIGHT_HOURS_DEVIATION = "light_hours_deviation"
     AUTOMATION_FROZEN = "automation_frozen"
+    LIGHT_CUT_DISTRUSTED = "light_cut_distrusted"
+    """The plants under a lamp read as having had enough light after far less
+    lamp than normal, so the cut was held back. See `CUT_FLOOR_FRACTION`."""
 
 
 @dataclass(frozen=True)

@@ -9,6 +9,7 @@ on-time check does not mistake a cut lamp for a dead one.
 from __future__ import annotations
 
 import copy
+from datetime import timedelta
 from typing import Any
 
 import pytest
@@ -80,6 +81,16 @@ async def minutes(hass: HomeAssistant, freezer: FrozenDateTimeFactory, n: int) -
         await tick(hass, freezer)
 
 
+async def normal(hass: HomeAssistant, minutes_a_day: float, days: int = 3) -> None:
+    """Give the study lamp a history of ordinary days before today."""
+    log = hass.data[DOMAIN].event_log
+    today = at(0, 0).date()
+    for back in range(days, 0, -1):
+        await log.async_record_on_time_day(
+            "study_shelf", today - timedelta(days=back), minutes_a_day, keep_days=14
+        )
+
+
 def controller(hass: HomeAssistant) -> LightController:
     return hass.data[DOMAIN].light_controllers["study_shelf"]
 
@@ -96,6 +107,9 @@ async def run_to_the_cut(
     lux(hass, 0)
     recorded = record_switch_calls(hass)
     await start(hass, freezer, at(9, 0), only_measured_config())
+    # A normal of 400 minutes trusts a cut from 200: well before this one, so
+    # these tests are about the cut and not the sanity check on it.
+    await normal(hass, 400)
     # To 14:00: an hour past the cut, and 11.25 mol had the lamp stayed on.
     await minutes(hass, freezer, 5 * 60)
     return recorded
@@ -257,3 +271,174 @@ class TestTheExcessMessage:
         ]
         assert "daylight" in item["detail"]
         assert "stuck on" not in item["detail"]
+
+
+BLINDING_LUX = 200000
+"""2500 µmol/m²/s through the lamp's factor: 9 mol an hour, so the monstera
+reads as having had enough before ten. A probe in direct sun, or a factor ten
+times too high."""
+
+
+class TestTheSanityCheck:
+    """A cut is only as good as the reading behind it."""
+
+    async def run_blinded(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> list[Any]:
+        simulate_lamps(hass, STUDY_SWITCH)
+        lux(hass, BLINDING_LUX)
+        recorded = record_switch_calls(hass)
+        await start(hass, freezer, at(9, 0), only_measured_config())
+        # Normal 600, so nothing is cut before 300 minutes: 14:00.
+        await normal(hass, 600)
+        return recorded
+
+    async def test_a_cut_far_under_normal_is_held_back(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        recorded = await self.run_blinded(hass, freezer)
+
+        await tick(hass, freezer, minutes=4 * 60)
+
+        assert targets(recorded, STUDY_SWITCH) == ["turn_on"]
+        assert controller(hass).enough_at is None
+        held = controller(hass).held_at
+        assert held is not None
+        assert held <= at(10, 0).time()
+
+    async def test_it_is_cut_once_the_floor_is_reached(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """Held, not overruled: the reading still says enough, and past half of
+        normal there is no reason left to doubt it."""
+        recorded = await self.run_blinded(hass, freezer)
+
+        await minutes(hass, freezer, 5 * 60 + 5)
+
+        assert targets(recorded, STUDY_SWITCH) == ["turn_on", "turn_off"]
+        assert controller(hass).enough_at == at(14, 0).time()
+
+    async def test_holding_it_back_is_said_once_to_the_system_feed(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        await self.run_blinded(hass, freezer)
+        await tick(hass, freezer, minutes=60)
+
+        items = [
+            item
+            for item in hass.states.get(OUTSTANDING).attributes["items"]
+            if item["kind"] == "light_cut_distrusted"
+        ]
+        assert len(items) == 1
+        assert items[0]["plant"] is None
+        assert items[0]["fixture"] == "study_shelf"
+        assert "normal 600" in items[0]["detail"]
+
+        state = hass.states.get(STUDY_ON_MINUTES)
+        assert state.attributes["normal_minutes"] == 600
+        assert state.attributes["cut_floor_minutes"] == 300
+        assert state.attributes["cut_held_at"] is not None
+
+    async def test_it_is_gone_the_next_day(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        await self.run_blinded(hass, freezer)
+        await tick(hass, freezer, minutes=60)
+        lux(hass, 0)
+
+        await tick(hass, freezer, minutes=15 * 60 + 15)
+
+        assert controller(hass).held_at is None
+        assert "light_cut_distrusted" not in kinds(hass)
+
+    async def test_a_held_cut_comes_back_held(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        await self.run_blinded(hass, freezer)
+        await tick(hass, freezer, minutes=60)
+        held = controller(hass).held_at
+        data = hass.data[DOMAIN]
+        for existing in data.light_controllers.values():
+            existing.async_stop()
+
+        rebuilt = LightController(
+            hass, data.config.light("study_shelf"), await reloaded_log(hass)
+        )
+        await rebuilt.async_start()
+
+        assert rebuilt.held_at == held
+        assert rebuilt.distrusted_issue() is not None
+
+    async def test_without_history_the_window_is_normal(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """The study window guarantees 09:00-17:00."""
+        await start(hass, freezer, at(9, 0), only_measured_config())
+
+        assert controller(hass).normal_minutes() == 480
+        assert controller(hass).cut_floor_minutes() == 240
+
+
+class TestNormal:
+    async def test_a_whole_day_is_banked_at_midnight(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        simulate_lamps(hass, STUDY_SWITCH)
+        await start(hass, freezer, at(0, 0))
+
+        await tick(hass, freezer, minutes=24 * 60 + 15)
+
+        days = hass.data[DOMAIN].event_log.on_time_days("study_shelf")
+        # 06:00-19:00 with nobody asleep.
+        assert days[at(0, 0).date()] == pytest.approx(13 * 60, abs=2)
+
+    async def test_a_day_that_started_part_way_through_is_not(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """Counted from a 09:00 start-up it is three hours short, and banked it
+        would drag normal down with it."""
+        simulate_lamps(hass, STUDY_SWITCH)
+        await start(hass, freezer, at(9, 0))
+
+        await tick(hass, freezer, minutes=15 * 60 + 15)
+
+        assert hass.data[DOMAIN].event_log.on_time_days("study_shelf") == {}
+
+    async def test_a_day_that_ended_while_down_is_banked_on_the_way_up(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """Down from 20:00 to the next morning: the window allowed nothing
+        after the last record, so it is the whole day."""
+        simulate_lamps(hass, STUDY_SWITCH)
+        await start(hass, freezer, at(0, 0))
+        await tick(hass, freezer, minutes=20 * 60)
+        data = hass.data[DOMAIN]
+        for existing in data.light_controllers.values():
+            existing.async_stop()
+
+        freezer.move_to(at(7, 0, day=16))
+        log = await reloaded_log(hass)
+        rebuilt = LightController(hass, data.config.light("study_shelf"), log)
+        await rebuilt.async_start()
+        await hass.async_block_till_done()
+
+        days = log.on_time_days("study_shelf")
+        assert days[at(0, 0).date()] == pytest.approx(13 * 60, abs=2)
+
+    async def test_a_day_cut_off_by_going_down_mid_window_is_not(
+        self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        simulate_lamps(hass, STUDY_SWITCH)
+        await start(hass, freezer, at(0, 0))
+        await tick(hass, freezer, minutes=12 * 60)
+        data = hass.data[DOMAIN]
+        for existing in data.light_controllers.values():
+            existing.async_stop()
+
+        freezer.move_to(at(7, 0, day=16))
+        log = await reloaded_log(hass)
+        rebuilt = LightController(hass, data.config.light("study_shelf"), log)
+        await rebuilt.async_start()
+        await hass.async_block_till_done()
+
+        assert log.on_time_days("study_shelf") == {}

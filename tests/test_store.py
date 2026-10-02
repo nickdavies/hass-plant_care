@@ -348,10 +348,32 @@ class TestOnTimeRecord:
 
         assert restarted(store).on_time("study_shelf") == record
 
+    def test_a_held_cut_survives_a_restart(self) -> None:
+        store = FakeStore()
+        record = replace(_at_minute(45.0), held_at=time(9, 50), held_minutes=45.0)
+        run(EventLog(store).async_record_on_time("study_shelf", record))
+
+        assert restarted(store).on_time("study_shelf") == record
+
+    def test_completed_days_survive_a_restart_and_are_trimmed(self) -> None:
+        store = FakeStore()
+        log = EventLog(store)
+        for back in range(5, 0, -1):
+            day = date(2026, 9, 15) - timedelta(days=back)
+            run(log.async_record_on_time_day("study_shelf", day, 600.0 + back, 3))
+
+        assert restarted(store).on_time_days("study_shelf") == {
+            date(2026, 9, 12): 603.0,
+            date(2026, 9, 13): 602.0,
+            date(2026, 9, 14): 601.0,
+        }
+        assert restarted(store).on_time_days("spare_shelf") == {}
+
     def test_a_record_from_before_the_cut_existed_still_loads(self) -> None:
         store = FakeStore()
         run(EventLog(store).async_record_on_time("study_shelf", _at_minute(30.0)))
-        del store.data["on_time"]["study_shelf"]["enough_at"]
+        for added in ("enough_at", "held_at", "held_minutes"):
+            del store.data["on_time"]["study_shelf"][added]
 
         stored = restarted(store).on_time("study_shelf")
         assert stored is not None
