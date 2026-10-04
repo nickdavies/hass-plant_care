@@ -2,11 +2,16 @@
 
 from __future__ import annotations
 
+from datetime import timedelta
+
+from freezegun.api import FrozenDateTimeFactory
 from homeassistant.core import HomeAssistant
 
 from .conftest import (
+    BRITTA_OUTSTANDING,
     MONSTERA_PEST_DONE,
     MONSTERA_PEST_DUE,
+    NICK_OUTSTANDING,
     OUTSTANDING,
     PASSIONFRUIT_ATTENTION,
     PASSIONFRUIT_FEED_DAYS,
@@ -137,3 +142,46 @@ class TestFeedShape:
     ) -> None:
         state = integration.states.get(PASSIONFRUIT_FEED_DAYS)
         assert state.attributes["every_days"] == 14
+
+
+class TestFeedSummary:
+    """The counts a summary card shows beside the feed's own: how many plants
+    it covers, and how many of them want water."""
+
+    async def test_plants_counts_each_feeds_own_plants(
+        self, integration: HomeAssistant
+    ) -> None:
+        """A group's plant is on each member's feed, and once on the whole."""
+        assert integration.states.get(OUTSTANDING).attributes["plants"] == 3
+        assert integration.states.get(NICK_OUTSTANDING).attributes["plants"] == 2
+        assert integration.states.get(BRITTA_OUTSTANDING).attributes["plants"] == 2
+
+    async def test_nothing_needs_water_at_first(
+        self, integration: HomeAssistant
+    ) -> None:
+        assert integration.states.get(OUTSTANDING).attributes["needs_water"] == 0
+
+    async def test_an_overdue_watering_task_counts_as_needing_water(
+        self, integration: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        """A plant with no probe says it is thirsty the only way it can: its
+        watering task, every four days, has run over."""
+        await press(integration, POT_WATER_DONE)
+        freezer.tick(timedelta(days=5))
+        # Any care press rewrites the feeds, without waiting for the interval.
+        await press(integration, MONSTERA_PEST_DONE)
+
+        assert integration.states.get(BRITTA_OUTSTANDING).attributes["needs_water"] == 1
+        assert integration.states.get(NICK_OUTSTANDING).attributes["needs_water"] == 0
+        assert integration.states.get(OUTSTANDING).attributes["needs_water"] == 1
+
+    async def test_another_overdue_task_does_not(
+        self, integration: HomeAssistant, freezer: FrozenDateTimeFactory
+    ) -> None:
+        await press(integration, PASSIONFRUIT_FEED_DONE)
+        freezer.tick(timedelta(days=15))
+        await press(integration, MONSTERA_PEST_DONE)
+
+        nick = integration.states.get(NICK_OUTSTANDING)
+        assert any(item["kind"] == "care" for item in nick.attributes["items"])
+        assert nick.attributes["needs_water"] == 0

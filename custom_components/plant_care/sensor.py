@@ -16,12 +16,14 @@ from .claims import add_and_claim
 from .const import (
     ATTR_ITEMS,
     ATTR_MARKDOWN,
+    ATTR_NEEDS_WATER,
+    ATTR_PLANTS,
     DOMAIN,
     RECOMPUTE_INTERVAL,
     SIGNAL_CARE_UPDATED,
 )
 from .entity import PlantEntity
-from .feed import all_items, person_items, plant_items
+from .feed import all_items, needs_water, person_items, plant_items
 from .light_entities import (
     DliTargetSensor,
     DliTodaySensor,
@@ -249,6 +251,9 @@ class _FeedSensor(SensorEntity):
     def _items(self) -> list[dict[str, Any]]:
         raise NotImplementedError
 
+    def _plants(self) -> tuple[Plant, ...]:
+        raise NotImplementedError
+
     @property
     def native_value(self) -> int:
         return len(self._items())
@@ -256,7 +261,13 @@ class _FeedSensor(SensorEntity):
     @property
     def extra_state_attributes(self) -> dict[str, Any]:
         items = self._items()
-        return {ATTR_ITEMS: items, ATTR_MARKDOWN: markdown.outstanding(items)}
+        plants = self._plants()
+        return {
+            ATTR_ITEMS: items,
+            ATTR_MARKDOWN: markdown.outstanding(items),
+            ATTR_PLANTS: len(plants),
+            ATTR_NEEDS_WATER: sum(needs_water(self._data, p) for p in plants),
+        }
 
 
 class OutstandingSensor(_FeedSensor):
@@ -267,6 +278,9 @@ class OutstandingSensor(_FeedSensor):
 
     def _items(self) -> list[dict[str, Any]]:
         return all_items(self._data)
+
+    def _plants(self) -> tuple[Plant, ...]:
+        return self._data.plants
 
 
 class PersonOutstandingSensor(_FeedSensor):
@@ -282,3 +296,6 @@ class PersonOutstandingSensor(_FeedSensor):
 
     def _items(self) -> list[dict[str, Any]]:
         return person_items(self._data, self._person)
+
+    def _plants(self) -> tuple[Plant, ...]:
+        return self._data.config.plants_for(self._person)

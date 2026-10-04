@@ -33,6 +33,15 @@ renders `items` itself has to know what every item kind carries, and there is
 more than one dashboard showing this list.
 """
 
+ATTR_PLANTS = "plants"
+"""How many plants a feed covers, so a summary can say "3 of 12" without
+knowing who owns what."""
+
+ATTR_NEEDS_WATER = "needs_water"
+"""How many of a feed's plants are waiting on a watering — the probe's verdict,
+or an overdue watering task where there is no probe. A plant counts once, so
+this is a number of plants, not of items."""
+
 ATTR_PLANT = "plant"
 ATTR_TASK = "task"
 ATTR_WHEN = "when"
