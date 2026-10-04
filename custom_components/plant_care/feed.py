@@ -157,6 +157,21 @@ def person_items(data: PlantCareData, person: str) -> list[dict[str, Any]]:
     return items
 
 
+def needs_water(data: PlantCareData, plant: Plant) -> bool:
+    """Whether this plant is waiting on a watering, by whichever signal it has:
+    its calibrated probe, or the watering task standing in for one.
+
+    Read off the plant's items, so it cannot disagree with the feed about what
+    is outstanding.
+    """
+    stand_ins = {task.task for task in plant.care if task.stands_in_for_probe}
+    return any(
+        item["kind"] == "needs_water"
+        or (item["kind"] == "care" and item["task"] in stand_ins)
+        for item in plant_items(data, plant)
+    )
+
+
 def all_items(data: PlantCareData) -> list[dict[str, Any]]:
     items: list[dict[str, Any]] = []
     for plant in data.plants:
