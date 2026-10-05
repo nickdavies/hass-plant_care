@@ -101,6 +101,33 @@ class TestObjective:
         assert objective.percent_of_target(3.0) is None
 
 
+class TestLampCutoff:
+    """Where a lamp over a plant stops adding anything worth having."""
+
+    def test_it_is_the_top_of_the_band(self) -> None:
+        """Filled to the top, not cut early: the plant gets all of its band."""
+        assert MONSTERA.lamp_cutoff == pytest.approx(9.0)
+
+    def test_enough_is_reached_at_the_cutoff_not_after_it(self) -> None:
+        assert not MONSTERA.has_had_enough(8.99)
+        assert MONSTERA.has_had_enough(9.0)
+        assert MONSTERA.has_had_enough(12.0)
+
+    def test_a_day_cut_at_the_top_is_not_an_excess(self) -> None:
+        """A minute or two of a strong lamp past the cut lands inside the 5%
+        the excess alert allows, which is what that margin is for."""
+        two_minutes_of_lamp = 900 * 120 / 1_000_000
+        landed = MONSTERA.lamp_cutoff + two_minutes_of_lamp
+        noon = datetime(2026, 9, 15, 12, tzinfo=UTC)
+        assert today_certainty(landed, noon, [], MONSTERA) is None
+
+    def test_the_excess_alert_waits_for_five_percent_past_the_top(self) -> None:
+        noon = datetime(2026, 9, 15, 12, tzinfo=UTC)
+        assert MONSTERA.excess_today == pytest.approx(9.45)
+        assert today_certainty(9.44, noon, [], MONSTERA) is None
+        assert today_certainty(9.46, noon, [], MONSTERA) is Direction.OVER
+
+
 class TestBurnRate:
     def test_on_pace_is_one(self) -> None:
         """A 20 mol budget over 28 days is 5 over 7 days. Spending exactly that

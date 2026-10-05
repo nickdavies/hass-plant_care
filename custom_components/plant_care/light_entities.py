@@ -71,7 +71,24 @@ class LightOnMinutesSensor(FixtureEntity, SensorEntity):
             "possible_minutes": possible,
             "day_possible_minutes": self._controller.day_possible_minutes(),
             "killswitch": self._controller.killed,
+            # When the plants under it had all had enough and it was cut for
+            # the day. The expectations above end here.
+            "enough_light_at": (
+                enough.isoformat("minutes")
+                if (enough := self._controller.enough_at) is not None
+                else None
+            ),
             "deviation": deviation.direction.value if deviation else None,
+            # The sanity check on the cut: under `cut_floor_minutes` of on-time
+            # today, a reading that says the plants have had enough is not
+            # believed. `cut_held_at` is when that last happened today.
+            "normal_minutes": round(self._controller.normal_minutes()),
+            "cut_floor_minutes": self._controller.cut_floor_minutes(),
+            "cut_held_at": (
+                held.isoformat("minutes")
+                if (held := self._controller.held_at) is not None
+                else None
+            ),
         }
 
 

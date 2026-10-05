@@ -534,6 +534,23 @@ class TestFixtures:
         config = load_config(LIT_PLANT, lights=[STUDY_LIGHT, spare], lux=[STUDY_LUX])
         assert [f.name for f in config.unreferenced_lights()] == ["spare_shelf"]
 
+    def test_plants_under_a_fixture_are_every_plant_naming_it(self) -> None:
+        spare = {
+            "name": "spare_shelf",
+            "switch": "switch.spare_outlet_grow_lamp_1",
+            "window": {"fixed": {"from": "07:00", "to": "19:00"}},
+        }
+        alii = {"name": "ficus_alii", "owner": "nick", "lights": ["study_shelf"]}
+        config = load_config(
+            LIT_PLANT, alii, lights=[STUDY_LIGHT, spare], lux=[STUDY_LUX]
+        )
+        study, spare_fixture = config.lights
+        assert [p.name for p in config.plants_under(study)] == [
+            "monstera",
+            "ficus_alii",
+        ]
+        assert config.plants_under(spare_fixture) == ()
+
     def test_the_sun_factor_defaults_and_can_be_overridden(self) -> None:
         config = load_config(LIT_PLANT, lights=[STUDY_LIGHT], lux=[STUDY_LUX])
         assert config.lux("study_shelf").sun_lux_to_ppfd == DEFAULT_SUN_LUX_TO_PPFD

@@ -14,6 +14,7 @@ from __future__ import annotations
 
 import asyncio
 from collections.abc import Coroutine
+from dataclasses import replace
 from datetime import UTC, date, datetime, time, timedelta
 from typing import Any, TypeVar
 
@@ -336,6 +337,48 @@ class TestOnTimeRecord:
         run(log.async_record_on_time("study_shelf", record))
 
         assert restarted(store).on_time("study_shelf") == record
+
+    def test_the_cut_survives_a_restart(self) -> None:
+        """Re-stamped at start-up instead, the hours between the real cut and
+        the restart would be judged as ones the lamp should have been on."""
+        store = FakeStore()
+        log = EventLog(store)
+        record = replace(_at_minute(300.0), enough_at=time(15, 42))
+        run(log.async_record_on_time("study_shelf", record))
+
+        assert restarted(store).on_time("study_shelf") == record
+
+    def test_a_held_cut_survives_a_restart(self) -> None:
+        store = FakeStore()
+        record = replace(_at_minute(45.0), held_at=time(9, 50), held_minutes=45.0)
+        run(EventLog(store).async_record_on_time("study_shelf", record))
+
+        assert restarted(store).on_time("study_shelf") == record
+
+    def test_completed_days_survive_a_restart_and_are_trimmed(self) -> None:
+        store = FakeStore()
+        log = EventLog(store)
+        for back in range(5, 0, -1):
+            day = date(2026, 9, 15) - timedelta(days=back)
+            run(log.async_record_on_time_day("study_shelf", day, 600.0 + back, 3))
+
+        assert restarted(store).on_time_days("study_shelf") == {
+            date(2026, 9, 12): 603.0,
+            date(2026, 9, 13): 602.0,
+            date(2026, 9, 14): 601.0,
+        }
+        assert restarted(store).on_time_days("spare_shelf") == {}
+
+    def test_a_record_from_before_the_cut_existed_still_loads(self) -> None:
+        store = FakeStore()
+        run(EventLog(store).async_record_on_time("study_shelf", _at_minute(30.0)))
+        for added in ("enough_at", "held_at", "held_minutes"):
+            del store.data["on_time"]["study_shelf"][added]
+
+        stored = restarted(store).on_time("study_shelf")
+        assert stored is not None
+        assert stored.minutes == 30.0
+        assert stored.enough_at is None
 
     def test_a_rewrite_replaces_rather_than_accumulating(self) -> None:
         """Written every few minutes, and each write is the running total."""

@@ -81,6 +81,10 @@ barely come on — and takes the on-time check down with it, since a comparison
 that only ever sees the last twenty minutes cannot see a bulb that died at nine.
 """
 
+SECTION_ON_TIME_DAYS = "on_time_days"
+"""Each fixture's completed days of on-time: what "normal" is for the check
+that refuses to trust a cut far below it."""
+
 FLAG_NEEDS_WATER = "needs_water"
 
 KILLSWITCH_SINCE = "killswitch_since"
@@ -127,6 +131,17 @@ class OnTimeRecord:
     arrives from MQTT discovery some time *after* the controller does, so at
     the moment the decision is made there is nothing there to read.
     """
+    enough_at: time | None = None
+    """Local time-of-day every plant under the lamp had had enough light, so it
+    was cut for the rest of the day. Kept for the expectations, which end there:
+    a restart would otherwise re-stamp it at start-up and judge the hours in
+    between as ones the lamp should have been on for."""
+    held_at: time | None = None
+    """Local time-of-day the plants first read as having had enough while the
+    lamp was still far under its normal on-time, so the cut was held back."""
+    held_minutes: float | None = None
+    """The lamp's on-time at `held_at`: how little it had run when the reading
+    said that was enough."""
 
 
 class EventLog:
@@ -146,6 +161,7 @@ class EventLog:
         self._intervals: dict[str, list[tuple[datetime, datetime]]] = {}
         self._announced: dict[str, set[str]] = {}
         self._on_time: dict[str, OnTimeRecord] = {}
+        self._on_time_days: dict[str, dict[date, float]] = {}
 
     async def async_load(self) -> None:
         raw: Mapping[str, Any] | None = await self._store.async_load()
@@ -180,6 +196,19 @@ class EventLog:
                         value,
                     )
 
+        for fixture, days in raw.get(SECTION_ON_TIME_DAYS, {}).items():
+            bucket = self._on_time_days.setdefault(fixture, {})
+            for day, value in days.items():
+                try:
+                    bucket[date.fromisoformat(day)] = float(value)
+                except (TypeError, ValueError):
+                    _LOGGER.warning(
+                        "plant_care: discarding unreadable on-time day %s/%s: %r",
+                        fixture,
+                        day,
+                        value,
+                    )
+
         for key, pairs in raw.get(SECTION_INTERVALS, {}).items():
             restored: list[tuple[datetime, datetime]] = []
             for pair in pairs:
@@ -205,6 +234,21 @@ class EventLog:
                     counted_from=float(record["counted_from"]),
                     seen=datetime.fromisoformat(record["seen"]),
                     on=bool(record["on"]),
+                    enough_at=(
+                        time.fromisoformat(record["enough_at"])
+                        if record.get("enough_at") is not None
+                        else None
+                    ),
+                    held_at=(
+                        time.fromisoformat(record["held_at"])
+                        if record.get("held_at") is not None
+                        else None
+                    ),
+                    held_minutes=(
+                        float(record["held_minutes"])
+                        if record.get("held_minutes") is not None
+                        else None
+                    ),
                 )
             except (KeyError, TypeError, ValueError):
                 # Dropping it costs one fixture the morning it has already
@@ -257,8 +301,27 @@ class EventLog:
                         "counted_from": round(record.counted_from, 3),
                         "seen": record.seen.isoformat(),
                         "on": record.on,
+                        "enough_at": (
+                            record.enough_at.isoformat()
+                            if record.enough_at is not None
+                            else None
+                        ),
+                        "held_at": (
+                            record.held_at.isoformat()
+                            if record.held_at is not None
+                            else None
+                        ),
+                        "held_minutes": (
+                            round(record.held_minutes, 3)
+                            if record.held_minutes is not None
+                            else None
+                        ),
                     }
                     for fixture, record in self._on_time.items()
+                },
+                SECTION_ON_TIME_DAYS: {
+                    fixture: {day.isoformat(): value for day, value in days.items()}
+                    for fixture, days in self._on_time_days.items()
                 },
             }
         )
@@ -351,6 +414,22 @@ class EventLog:
     def on_time(self, fixture: str) -> OnTimeRecord | None:
         """`None` means no run has written one for this fixture yet."""
         return self._on_time.get(fixture)
+
+    async def async_record_on_time_day(
+        self, fixture: str, day: date, minutes: float, keep_days: int
+    ) -> None:
+        """Write one completed day of a fixture's on-time, trimming past
+        `keep_days`."""
+        bucket = self._on_time_days.setdefault(fixture, {})
+        bucket[day] = round(minutes, 3)
+
+        for stale in sorted(bucket)[: max(0, len(bucket) - keep_days)]:
+            del bucket[stale]
+
+        await self._async_save()
+
+    def on_time_days(self, fixture: str) -> dict[date, float]:
+        return dict(self._on_time_days.get(fixture, {}))
 
     # ---- Daily light integral ------------------------------------------
 

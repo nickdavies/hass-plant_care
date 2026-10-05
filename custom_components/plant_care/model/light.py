@@ -377,6 +377,48 @@ tips the comparison over — `tests/test_light.py` pins the margin.
 """
 
 
+NORMAL_ON_TIME_DAYS = 14
+"""How many completed days of a lamp's on-time "normal" is taken over."""
+
+MIN_DAYS_FOR_NORMAL = 3
+"""Completed days needed before they say what normal is. Until then the
+window's guaranteed minutes stand in, which is what the lamp would run on a day
+nothing cut it."""
+
+CUT_FLOOR_FRACTION = 0.7
+"""How far under normal a lamp may run before a cut is distrusted.
+
+A lamp is cut once the plants under it read as having had enough light, so
+the cut is only as good as the lux reading behind it. A probe reporting
+nonsense, or a `lux_to_ppfd` typo, would cut a lamp after an hour and starve
+everything under it with nothing looking wrong. Under 70% of normal is
+"wildly below": a bright day trims a lamp's hours, a broken reading takes
+most of them.
+"""
+
+
+def normal_on_minutes(completed: Sequence[float], guaranteed: int) -> float:
+    """A lamp's usual daily on-time: the median of its recent completed days.
+
+    The median rather than the mean, so the odd day — a killswitch weekend, a
+    restart that cost the evening, a day a lamp was held on by hand — does not
+    move it. `completed` is oldest first; only the last `NORMAL_ON_TIME_DAYS`
+    count, so a changed window is normal again within a fortnight.
+    """
+    recent = sorted(completed[-NORMAL_ON_TIME_DAYS:])
+    if len(recent) < MIN_DAYS_FOR_NORMAL:
+        return float(guaranteed)
+    middle = len(recent) // 2
+    if len(recent) % 2:
+        return recent[middle]
+    return (recent[middle - 1] + recent[middle]) / 2
+
+
+def cut_floor_minutes(normal: float) -> int:
+    """On-time a lamp must reach today before a cut is trusted."""
+    return int(normal * CUT_FLOOR_FRACTION)
+
+
 @dataclass(frozen=True)
 class OnTimeDeviation:
     """A fixture that did not run for as long as its window says it should

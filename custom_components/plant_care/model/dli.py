@@ -63,6 +63,18 @@ class Direction(Enum):
     BOTH = "both"
 
 
+EXCESS_TODAY_FACTOR = 1.05
+"""How far past the top of the band today must be before it is an excess.
+
+Not the top itself, because a lamp is cut *at* the top and cutting is not
+instant: the total is sampled once a minute, the controller acts on the next
+evaluation, the outlet takes a moment. Every day the cut works lands a minute
+or two over, and an alert at exactly `high` would page for each of them. Five
+percent of an 18 mol band is 0.9 mol, three quarters of an hour of
+355 µmol/m²/s; a stuck lamp clears that easily, the overshoot never does.
+"""
+
+
 @dataclass(frozen=True)
 class DliObjective:
     """What "enough light" means for one plant."""
@@ -95,6 +107,28 @@ class DliObjective:
         not getting what the band describes, and the mean alone cannot see it.
         """
         return (self.preferred.high - self.preferred.low) * 3.0
+
+    @property
+    def lamp_cutoff(self) -> float:
+        """Today's total past which a lamp over this plant has nothing to add:
+        the top of the band, so the plant gets all of it. The overshoot a cut
+        takes is absorbed by `EXCESS_TODAY_FACTOR` rather than by cutting
+        early."""
+        return self.preferred.high
+
+    @property
+    def excess_today(self) -> float:
+        """Today's total past which the day is an excess already banked."""
+        return self.preferred.high * EXCESS_TODAY_FACTOR
+
+    def has_had_enough(self, accumulated: float) -> bool:
+        """Whether today's light has reached `lamp_cutoff`.
+
+        A day's total only grows, so once this is true it stays true until
+        midnight. That is what keeps a lamp cut by it off: the lamp going out
+        lowers the light *rate*, never the total, so there is nothing to flap.
+        """
+        return accumulated >= self.lamp_cutoff
 
     def percent_of_target(self, value: float) -> float | None:
         """`value` as a percentage of the preferred band's low edge, so 100 is
@@ -323,15 +357,16 @@ def today_certainty(
     every sunrise a disaster. Both tests here are statements about what can no
     longer change:
 
-    - accumulation has already passed the upper bound while the day is still
+    - accumulation has already passed the upper bound, by more than a lamp's
+      cut overshoots it (`EXCESS_TODAY_FACTOR`), while the day is still
       running, so the excess is a fact whatever happens next. This is the
-      stuck-on lamp, caught exactly.
+      stuck-on lamp.
     - the lower bound is out of reach even if the rest of the day matches the
       best day on record, so the shortfall is a fact too. Generous on purpose:
       the best day is an over-estimate of what the *remainder* of a day can
       deliver, which means this fires late rather than wrongly.
     """
-    if accumulated > objective.preferred.high:
+    if accumulated > objective.excess_today:
         return Direction.OVER
 
     completed = [day.value for day in history if day.day < now.date()]

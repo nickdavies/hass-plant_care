@@ -134,17 +134,19 @@ def _on_time_items(data: PlantCareData, plant: Plant) -> list[dict[str, Any]]:
 def system_items(data: PlantCareData) -> list[dict[str, Any]]:
     """Faults belonging to no single plant.
 
-    Only one today: a killswitch left on long enough to have been forgotten.
-    It carries `plant: None`, because attaching it to one of the plants under
-    the fixture would hide it from everyone looking at the others, and
-    `owner: None` routes it to `system_notify`. The fixture is named so two
-    frozen lamps do not share one announce key.
+    Two kinds: a killswitch left on long enough to have been forgotten, and a
+    cut held back because the lamp had barely run. Both carry `plant: None`,
+    because attaching one to a plant under the fixture would hide it from
+    everyone looking at the others, and `owner: None` routes it to
+    `system_notify`. The fixture is named so two lamps do not share one
+    announce key.
     """
     now = dt_util.utcnow()
     return [
         {**issue.as_item(), "fixture": controller.fixture.name}
         for controller in data.light_controllers.values()
-        if (issue := controller.frozen_issue(now)) is not None
+        for issue in (controller.frozen_issue(now), controller.distrusted_issue())
+        if issue is not None
     ]
 
 

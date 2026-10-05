@@ -106,6 +106,19 @@ class DliCoordinator:
         """The fixture's members averaged, or `None` while they are all out."""
         return self._last_lux
 
+    def has_had_enough(self, now: datetime | None = None) -> bool:
+        """Whether today has reached the point a lamp over it can be cut.
+
+        Asks after the accumulator's day as well as its total. Just past
+        midnight a light controller can tick before this coordinator has
+        rolled over, and yesterday's total read as today's would hold every
+        lamp over this plant off for the whole day.
+        """
+        now = now or dt_util.now()
+        if self._accumulator.day != now.date():
+            return False
+        return self._objective.has_had_enough(self._accumulator.total)
+
     def history(self) -> list[DailyDli]:
         return [
             DailyDli(day=day, value=value)
@@ -163,6 +176,10 @@ class DliCoordinator:
         except (TypeError, ValueError):
             return None
 
+    def _is_on(self, fixture: LightFixture) -> bool:
+        state = self._hass.states.get(fixture.switch_entity)
+        return state is not None and state.state == STATE_ON
+
     def _lit_by(self) -> list[float]:
         """The factors of the lamps currently on over this plant.
 
@@ -175,8 +192,7 @@ class DliCoordinator:
 
         factors: list[float] = []
         for fixture in self._fixtures:
-            state = self._hass.states.get(fixture.switch_entity)
-            if state is None or state.state != STATE_ON:
+            if not self._is_on(fixture):
                 continue
             if fixture.lux_to_ppfd is None:
                 # Rejected at parse for a mixed plant, so reaching here means
@@ -371,14 +387,24 @@ class DliCoordinator:
 
         band = self._objective.preferred
         if certainty is Direction.OVER:
+            # Every lamp over it already off means the rest is daylight: a lamp
+            # cut for the day leaves nothing to blame but the window.
+            lamps_off = bool(self._fixtures) and not any(
+                self._is_on(fixture) for fixture in self._fixtures
+            )
+            cause = (
+                "Its lamps are already off, so this is daylight: shade it or move it."
+                if lamps_off
+                else "A lamp is probably stuck on."
+            )
             return [
                 HealthIssue(
                     kind=IssueKind.LIGHT_EXCESS_TODAY,
                     label="Too much light today",
                     detail=(
                         f"Today has already delivered {self.today:.1f} mol/m², past "
-                        f"the {band.high:g} upper bound, and the day is not over. A "
-                        "lamp is probably stuck on."
+                        f"the {band.high:g} upper bound, and the day is not over. "
+                        f"{cause}"
                     ),
                     value=self.today,
                 )
