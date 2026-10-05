@@ -338,8 +338,8 @@ matcher a lamp uses.
 window says when a lamp *may* run; light already banked says whether it still
 needs to. Once today's DLI for every plant under a fixture reaches the top of
 its preferred band, the lamp goes off and stays off until midnight, whatever
-the window says, guaranteed stretch included. Long windows and plants that
-also catch the sun no longer run past their band.
+the window says, guaranteed stretch included. So a long window, or a plant
+that also catches the sun, stops at the top of its band.
 
 "Every plant" is strict: a fixture with an unmeasured plant under it is never
 cut, because nothing can show that plant has had enough. The line is the top
