@@ -104,35 +104,28 @@ class TestObjective:
 class TestLampCutoff:
     """Where a lamp over a plant stops adding anything worth having."""
 
-    def test_it_sits_just_under_the_top_of_the_band(self) -> None:
-        # 5% of a 4-9 band's width under 9.
-        assert MONSTERA.lamp_cutoff == pytest.approx(8.75)
-
-    def test_the_headroom_scales_with_the_band(self) -> None:
-        bright = DliObjective(category="bright", preferred=Band(low=12.0, high=18.0))
-        assert bright.lamp_cutoff == pytest.approx(17.7)
-
-    def test_it_stays_inside_the_band(self) -> None:
-        """Cut below the bottom and the lamp would starve the plant it is
-        protecting; cut at or past the top and every working day pages."""
-        for objective in (MONSTERA, TIGHT):
-            band = objective.preferred
-            assert band.low < objective.lamp_cutoff < band.high
+    def test_it_is_the_top_of_the_band(self) -> None:
+        """Filled to the top, not cut early: the plant gets all of its band."""
+        assert MONSTERA.lamp_cutoff == pytest.approx(9.0)
 
     def test_enough_is_reached_at_the_cutoff_not_after_it(self) -> None:
-        assert not MONSTERA.has_had_enough(8.74)
-        assert MONSTERA.has_had_enough(8.75)
+        assert not MONSTERA.has_had_enough(8.99)
+        assert MONSTERA.has_had_enough(9.0)
         assert MONSTERA.has_had_enough(12.0)
 
-    def test_a_day_cut_at_the_line_is_not_an_excess(self) -> None:
-        """A minute or two of a strong lamp past the cut still lands in band,
-        which is what the headroom is for."""
+    def test_a_day_cut_at_the_top_is_not_an_excess(self) -> None:
+        """A minute or two of a strong lamp past the cut lands inside the 5%
+        the excess alert allows, which is what that margin is for."""
         two_minutes_of_lamp = 900 * 120 / 1_000_000
         landed = MONSTERA.lamp_cutoff + two_minutes_of_lamp
-        assert (
-            today_certainty(landed, datetime(2026, 9, 15, 14, tzinfo=UTC), [], MONSTERA)
-            is None
-        )
+        noon = datetime(2026, 9, 15, 12, tzinfo=UTC)
+        assert today_certainty(landed, noon, [], MONSTERA) is None
+
+    def test_the_excess_alert_waits_for_five_percent_past_the_top(self) -> None:
+        noon = datetime(2026, 9, 15, 12, tzinfo=UTC)
+        assert MONSTERA.excess_today == pytest.approx(9.45)
+        assert today_certainty(9.44, noon, [], MONSTERA) is None
+        assert today_certainty(9.46, noon, [], MONSTERA) is Direction.OVER
 
 
 class TestBurnRate:

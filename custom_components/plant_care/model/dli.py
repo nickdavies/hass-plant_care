@@ -63,13 +63,15 @@ class Direction(Enum):
     BOTH = "both"
 
 
-LAMP_CUTOFF_HEADROOM = 0.05
-"""How far under the top of the band a lamp is cut, as a fraction of the
-band's width.
+EXCESS_TODAY_FACTOR = 1.05
+"""How far past the top of the band today must be before it is an excess.
 
-A guess, sized to cover a few minutes of a strong lamp with room to spare. A
-12–18 band cuts at 17.7 mol, which is a quarter of an hour of 355 µmol/m²/s;
-the overshoot it has to absorb is a minute or two of it.
+Not the top itself, because a lamp is cut *at* the top and cutting is not
+instant: the total is sampled once a minute, the controller acts on the next
+evaluation, the outlet takes a moment. Every day the cut works lands a minute
+or two over, and an alert at exactly `high` would page for each of them. Five
+percent of an 18 mol band is 0.9 mol, three quarters of an hour of
+355 µmol/m²/s; a stuck lamp clears that easily, the overshoot never does.
 """
 
 
@@ -108,18 +110,16 @@ class DliObjective:
 
     @property
     def lamp_cutoff(self) -> float:
-        """Today's total past which a lamp over this plant has nothing to add.
+        """Today's total past which a lamp over this plant has nothing to add:
+        the top of the band, so the plant gets all of it. The overshoot a cut
+        takes is absorbed by `EXCESS_TODAY_FACTOR` rather than by cutting
+        early."""
+        return self.preferred.high
 
-        Just under the top of the band rather than at it. Turning a lamp off
-        is not instant — the total is sampled once a minute, the controller
-        acts on the next evaluation, the outlet takes a moment — and a cut
-        aimed exactly at `high` lands a little over it every time, which is a
-        "too much light today" item on every day the cut works. Headroom from
-        the band's own width, for `unstable_spread`'s reason: it scales with
-        how fussy the plant is and there is no extra number to configure.
-        """
-        band = self.preferred
-        return band.high - (band.high - band.low) * LAMP_CUTOFF_HEADROOM
+    @property
+    def excess_today(self) -> float:
+        """Today's total past which the day is an excess already banked."""
+        return self.preferred.high * EXCESS_TODAY_FACTOR
 
     def has_had_enough(self, accumulated: float) -> bool:
         """Whether today's light has reached `lamp_cutoff`.
@@ -357,15 +357,16 @@ def today_certainty(
     every sunrise a disaster. Both tests here are statements about what can no
     longer change:
 
-    - accumulation has already passed the upper bound while the day is still
+    - accumulation has already passed the upper bound, by more than a lamp's
+      cut overshoots it (`EXCESS_TODAY_FACTOR`), while the day is still
       running, so the excess is a fact whatever happens next. This is the
-      stuck-on lamp, caught exactly.
+      stuck-on lamp.
     - the lower bound is out of reach even if the rest of the day matches the
       best day on record, so the shortfall is a fact too. Generous on purpose:
       the best day is an over-estimate of what the *remainder* of a day can
       deliver, which means this fires late rather than wrongly.
     """
-    if accumulated > objective.preferred.high:
+    if accumulated > objective.excess_today:
         return Direction.OVER
 
     completed = [day.value for day in history if day.day < now.date()]

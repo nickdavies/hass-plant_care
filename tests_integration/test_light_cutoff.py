@@ -39,7 +39,7 @@ OUTSTANDING = "sensor.plant_outstanding"
 
 LAMP_LUX = 50000
 """625 µmol/m²/s through the study lamp's 0.0125: 2.25 mol an hour, so the
-monstera's 8.75 cutoff falls a little before 13:00 from a 09:00 start."""
+monstera's 9 mol cutoff falls at 13:00 from a 09:00 start."""
 
 
 def only_measured_config() -> dict[str, Any]:
@@ -75,7 +75,7 @@ async def minutes(hass: HomeAssistant, freezer: FrozenDateTimeFactory, n: int) -
     """One minute at a time, as production samples.
 
     `tick` steps fifteen, which credits each DLI reading for a quarter of an
-    hour — far coarser than the headroom the cut is sized against.
+    hour — far coarser than the 5% the excess alert allows a cut.
     """
     for _ in range(n):
         await tick(hass, freezer)
@@ -107,9 +107,9 @@ async def run_to_the_cut(
     lux(hass, 0)
     recorded = record_switch_calls(hass)
     await start(hass, freezer, at(9, 0), only_measured_config())
-    # A normal of 400 minutes trusts a cut from 200: well before this one, so
+    # A normal of 300 minutes trusts a cut from 210: well before this one, so
     # these tests are about the cut and not the sanity check on it.
-    await normal(hass, 400)
+    await normal(hass, 300)
     # To 14:00: an hour past the cut, and 11.25 mol had the lamp stayed on.
     await minutes(hass, freezer, 5 * 60)
     return recorded
@@ -124,14 +124,15 @@ class TestTheCut:
         assert targets(recorded, STUDY_SWITCH) == ["turn_on", "turn_off"]
         cut = controller(hass).enough_at
         assert cut is not None
-        assert at(12, 45).time() <= cut <= at(13, 0).time()
+        assert at(12, 55).time() <= cut <= at(13, 5).time()
 
     async def test_the_day_lands_at_the_top_of_the_band_not_over_it(
         self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
     ) -> None:
         await run_to_the_cut(hass, freezer)
 
-        assert 8.75 <= float(hass.states.get(MONSTERA_DLI).state) <= 9.0
+        # Filled to the top, and the overshoot inside the alert's 5%.
+        assert 9.0 <= float(hass.states.get(MONSTERA_DLI).state) <= 9.45
         assert "light_excess_today" not in kinds(hass)
 
     async def test_it_stays_off_for_the_rest_of_the_day(
@@ -289,7 +290,7 @@ class TestTheSanityCheck:
         lux(hass, BLINDING_LUX)
         recorded = record_switch_calls(hass)
         await start(hass, freezer, at(9, 0), only_measured_config())
-        # Normal 600, so nothing is cut before 300 minutes: 14:00.
+        # Normal 600, so nothing is cut before 420 minutes: 16:00.
         await normal(hass, 600)
         return recorded
 
@@ -309,14 +310,14 @@ class TestTheSanityCheck:
     async def test_it_is_cut_once_the_floor_is_reached(
         self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
     ) -> None:
-        """Held, not overruled: the reading still says enough, and past half of
+        """Held, not overruled: the reading still says enough, and past 70% of
         normal there is no reason left to doubt it."""
         recorded = await self.run_blinded(hass, freezer)
 
-        await minutes(hass, freezer, 5 * 60 + 5)
+        await minutes(hass, freezer, 7 * 60 + 5)
 
         assert targets(recorded, STUDY_SWITCH) == ["turn_on", "turn_off"]
-        assert controller(hass).enough_at == at(14, 0).time()
+        assert controller(hass).enough_at == at(16, 0).time()
 
     async def test_holding_it_back_is_said_once_to_the_system_feed(
         self, hass: HomeAssistant, freezer: FrozenDateTimeFactory
@@ -336,7 +337,7 @@ class TestTheSanityCheck:
 
         state = hass.states.get(STUDY_ON_MINUTES)
         assert state.attributes["normal_minutes"] == 600
-        assert state.attributes["cut_floor_minutes"] == 300
+        assert state.attributes["cut_floor_minutes"] == 420
         assert state.attributes["cut_held_at"] is not None
 
     async def test_it_is_gone_the_next_day(
@@ -376,7 +377,7 @@ class TestTheSanityCheck:
         await start(hass, freezer, at(9, 0), only_measured_config())
 
         assert controller(hass).normal_minutes() == 480
-        assert controller(hass).cut_floor_minutes() == 240
+        assert controller(hass).cut_floor_minutes() == 336
 
 
 class TestNormal:

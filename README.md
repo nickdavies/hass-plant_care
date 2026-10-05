@@ -342,17 +342,18 @@ the window says, guaranteed stretch included. Long windows and plants that
 also catch the sun no longer run past their band.
 
 "Every plant" is strict: a fixture with an unmeasured plant under it is never
-cut, because nothing can show that plant has had enough. The line is just
-under the top of the band (5% of its width) rather than at it, so the minute
-or two a cut takes lands the day at the top instead of paging "too much light
-today". A day's total only grows, so nothing can bring a cut lamp back on
+cut, because nothing can show that plant has had enough. The line is the top
+of the band, so the plant gets all of it. Cutting takes a minute or two, so
+every working cut lands a little over; the "too much light today" item
+therefore waits for 5% past the top, which a stuck lamp clears easily and an
+overshoot never does. A day's total only grows, so nothing can bring a cut lamp back on
 before midnight. A plant just past midnight is never judged on yesterday's
 total either.
 
 A cut is only as good as the lux reading behind it, so it is sanity-checked
 against how long the lamp normally runs. Normal is the median of its last 14
 completed days of on-time. Until there are 3, the window's guaranteed minutes
-stand in. Below half of normal, a reading that says the plants have had
+stand in. Below 70% of normal, a reading that says the plants have had
 enough is not believed: the lamp runs on to that floor before it can be cut,
 and a `light_cut_distrusted` item goes to the system feed once that day. A
 probe in direct sun or a `lux_to_ppfd` typo would otherwise cut a lamp after

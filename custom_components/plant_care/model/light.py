@@ -385,15 +385,15 @@ MIN_DAYS_FOR_NORMAL = 3
 window's guaranteed minutes stand in, which is what the lamp would run on a day
 nothing cut it."""
 
-CUT_FLOOR_FRACTION = 0.5
+CUT_FLOOR_FRACTION = 0.7
 """How far under normal a lamp may run before a cut is distrusted.
 
 A lamp is cut once the plants under it read as having had enough light, so
 the cut is only as good as the lux reading behind it. A probe reporting
 nonsense, or a `lux_to_ppfd` typo, would cut a lamp after an hour and starve
-everything under it with nothing looking wrong. Half of normal is "wildly
-below": a bright day trims a lamp's hours, and a broken reading takes most of
-them.
+everything under it with nothing looking wrong. Under 70% of normal is
+"wildly below": a bright day trims a lamp's hours, a broken reading takes
+most of them.
 """
 
 

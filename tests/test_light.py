@@ -372,8 +372,8 @@ class TestNormalOnTime:
         assert normal_on_minutes([], guaranteed=480) == 480
         assert normal_on_minutes([100, 100], guaranteed=480) == 480
 
-    def test_the_floor_is_half_of_normal(self) -> None:
-        assert cut_floor_minutes(780) == 390
+    def test_the_floor_is_seventy_percent_of_normal(self) -> None:
+        assert cut_floor_minutes(780) == 546
         assert cut_floor_minutes(0) == 0
 
 
