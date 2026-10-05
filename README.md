@@ -268,6 +268,13 @@ Neither attribute is recorded: the count is worth a history, the prose is
 re-derivable at any time and would otherwise be written to the database on
 every measurement that moves.
 
+Beside them, for a summary that wants more than the count, `plants` is how many
+plants the feed covers and `needs_water` how many of those are waiting on a
+watering: a calibrated probe's verdict, or, for a plant without one, its
+watering task running over. A plant counts once however many items it has, and
+both are worked out here for the same reason the list is rendered here: which
+care task stands in for a probe is this component's knowledge, not a card's.
+
 **The coordinator subscribes to `state_reported` as well as `state_changed`, and
 reads `last_reported`.** A pot sitting still reports the same number for hours;
 Home Assistant fires no state *change* for that, and `last_updated` would hand

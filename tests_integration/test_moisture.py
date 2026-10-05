@@ -149,6 +149,7 @@ class TestNeedsWaterReachesTheFeed:
         outstanding = integration.states.get(OUTSTANDING)
         kinds = [item["kind"] for item in outstanding.attributes["items"]]
         assert "needs_water" in kinds
+        assert outstanding.attributes["needs_water"] == 1
 
     async def test_a_watering_clears_it(
         self, integration: HomeAssistant, freezer: FrozenDateTimeFactory
