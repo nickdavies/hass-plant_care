@@ -3,7 +3,7 @@
 A Home Assistant component for running a plant-care operation: moisture
 monitoring, watering detection, grow light scheduling, daily light integral as a
 service objective, recurring care tasks, one consolidated feed of everything
-outstanding, routed and tabbed per owner.
+outstanding, routed and shown per owner.
 
 **Status: feature complete, not yet deployed.** Everything described here works
 and is tested. None of it has run against real hardware, and every tolerance in
@@ -33,7 +33,7 @@ plant_care:
   owners:                                     # a `groups` key is a group, else a person
     nick:
       action: notify.nick
-      icon: mdi:human-male                    # their tab's icon; people only
+      icon: mdi:human-male                    # their overview's icon; people only
     britta:
       action: notify.britta                   # no icon, so mdi:account
     primary:
@@ -135,12 +135,30 @@ separate custom component that must be installed alongside this one.
 
 ## The Plants dashboard
 
-`/plants` has an overview tab for everything and one per person, then **Lamps**
-(every grow light's switch, on-time, killswitch and schedule), then **Debug**
-(every plant's entities and graphs in full).
+`/plants` has five tabs:
 
-An overview is one row of bars per plant, the outstanding feed, then graphs
-putting the plants side by side:
+- **All**, the overview.
+- **Water**: every probe's raw reading on one graph, available water across the
+  calibrated plants, then each probe in full with its week.
+- **Light**: each measured plant's light as a percentage of its target, then
+  per plant its DLI today, light level and the lux sensors that level averages,
+  on a card and a two-day graph, then every grow light (switch, on-time,
+  killswitch and schedule).
+- **Chores**: every care task counting down, then each plant's tasks with the
+  buttons that mark them done.
+- **Debug**: every plant's entities and graphs in full.
+
+The tabs are always there, saying so when they have nothing to show, so a link
+to one never breaks. Then two kinds of subview, out of the tab bar: an overview
+per person at `plants/<person>`, which their own dashboard links to, and a page
+per plant at `plants/plant-<name>`: its bars, then everything the Debug tab
+shows for it.
+
+An overview is a button per plant, three across, each opening its page; one
+row of bars per plant; the outstanding feed; then graphs putting the plants
+side by side.
+
+The bars:
 
 - **Water**, the best measure there is: available water on the calibrated
   scale (orange below the refill threshold), else the probe's own reading,
@@ -159,17 +177,32 @@ The bars are this component's own card, `custom:plant-care-bars`
 (`dashboards/bars-card.js`), served and loaded at setup, so no dashboard needs a
 resource entry for it.
 
-The cards are also offered as `lovelace_codegen` fragments, so a hand-written
-dashboard can embed them without copying them:
+Each tab is its own module under `dashboards/`, built from small card
+functions, and the pieces are offered as `lovelace_codegen` fragments, so a
+hand-written dashboard can embed them, or rearrange them, without copying them:
 
 ```yaml
 type: custom:codegen-fragment
 source: plant_care
-fragment: overview   # optional param `person`
+fragment: water   # optional param `person`
 ```
 
-`plant` (one plant's bars) and `plant_detail` take a `plant`; `lamp` takes a
-`lamp`.
+| Fragment | Params | What |
+| --- | --- | --- |
+| `overview`, `water`, `light`, `chores`, `debug` | `person`? | A whole tab |
+| `plant_grid` | `person`? | The plant buttons |
+| `bars` | `person`? | Every plant's bars |
+| `feed` | `person`? | The outstanding feed |
+| `water_graph`, `light_graph`, `moisture_graph` | `person`? | Available water, light % of target, raw moisture |
+| `lamps` | `person`? | Every grow light over the plants |
+| `plant`, `plant_detail` | `plant` | One plant's bars; everything about it |
+| `plant_water`, `plant_light`, `plant_chores` | `plant` | One plant's part of a tab |
+| `lamp` | `lamp` | One grow light |
+
+The per-plant pieces accept only the plants that have one (`plant_water` a
+plant with a probe, and so on), so the choices
+`lovelace_codegen/fragments` lists are the ones that render. A graph with no
+plant on it renders as a line saying so.
 
 Every entity is claimed with the
 [config bridge](https://github.com/nickdavies/hass-config_bridge), when it is
@@ -230,12 +263,12 @@ button is what would become the second source of truth.
 group iff it is a key of `groups`, which is the household file
 `light_motion_profiles` also includes, so membership cannot drift. A group has
 one shared notify action. Membership decides dashboards: each member of a group
-gets its plants on their own tab (`plants/<person>`) and in
+gets its plants on their own overview (`plants/<person>`) and in
 `sensor.plant_outstanding_<person>`, so members of a group in `owners` must be
 people in `owners`. Faults belonging to no plant go to `system_notify` and the
 shared `plants/all` tab only.
 
-A person may set an `icon` for their tab, defaulting to `mdi:account`. A group
+A person may set an `icon` for their overview, defaulting to `mdi:account`. A group
 may not: it has no tab, so the icon would render nowhere and read as one that
 failed to apply — that config is refused rather than ignored.
 
