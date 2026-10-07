@@ -194,4 +194,10 @@ class TestTheEmptyConfig:
         assert await _try_setup(hass, copy.deepcopy(EMPTY_CONFIG))
 
         config = await hass.data["lovelace"].dashboards["plants"].async_load(False)
-        assert [view["path"] for view in config["views"]] == ["all", "debug"]
+        assert [view["path"] for view in config["views"]] == [
+            "all",
+            "water",
+            "light",
+            "chores",
+            "debug",
+        ]
