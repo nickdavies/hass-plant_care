@@ -217,7 +217,7 @@ UI changes are kept.
 
 ```bash
 python -m pytest tests/ -c tests/pytest.ini          # no HA needed
-python -m pytest tests_integration/                  # needs pytest-homeassistant-custom-component
+python -m pytest tests_integration/                  # needs pytest-homeassistant
 ```
 
 The integration tests also need `lovelace_codegen` and the config bridge,

@@ -29,8 +29,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.13"
-      # The probatio Home Assistant 2026.9.2 ships; move it with the pin below.
-      - run: pip install pytest probatio==0.11.4
+      # The probatio Home Assistant 2026.11.2 ships; move it with the pin below.
+      - run: pip install pytest probatio==0.13.0
       - run: python -m pytest tests/ -v -c tests/pytest.ini
 
   integration:
@@ -53,8 +53,8 @@ jobs:
       - uses: actions/setup-python@v5
         with:
           python-version: "3.14"
-      # This release installs Home Assistant 2026.9.2, the version homelab
-      # deploys. Each release pins exactly one Home Assistant version, so move
-      # this whenever homelab's does.
-      - run: pip install pytest pytest-homeassistant-custom-component==0.13.365 tzdata
+      # Home Assistant's own test package, versioned with it: this installs
+      # Home Assistant 2026.11.2, the version homelab deploys. Move it whenever
+      # homelab's does.
+      - run: pip install pytest pytest-homeassistant==2026.11.2 tzdata
       - run: python -m pytest tests_integration/ -v -c tests_integration/pytest.ini
