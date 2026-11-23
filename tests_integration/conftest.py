@@ -1,5 +1,4 @@
-"""Integration test fixtures — a real Home Assistant, via
-pytest-homeassistant-custom-component.
+"""Integration test fixtures — a real Home Assistant, via pytest-homeassistant.
 
 The unit tests cover the logic; these cover the things only a running Home
 Assistant can show: that the entities actually get created with the ids the
@@ -20,7 +19,7 @@ from homeassistant.core import HomeAssistant, ServiceCall
 from homeassistant.loader import DATA_CUSTOM_COMPONENTS
 from homeassistant.setup import async_setup_component
 from homeassistant.util import dt as dt_util
-from pytest_homeassistant_custom_component.common import (
+from pytest_homeassistant.common import (
     async_fire_time_changed,
     async_mock_service,
 )
@@ -254,9 +253,9 @@ def _ensure_custom_components_path() -> None:
     """Put this project's custom_components, and its dependency's, on the
     namespace path.
 
-    pytest-homeassistant-custom-component points the `custom_components`
-    namespace package at its own testing_config directory, so without this the
-    component under test is invisible.
+    pytest-homeassistant points the `custom_components` namespace package at
+    its own testing_config directory, so without this the component under test
+    is invisible.
     """
     import custom_components
 
